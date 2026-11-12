@@ -18,6 +18,24 @@ GAME_UNIT = 0x00E2D434        # -> sGameUnit
 SCENE_INFO = 0x00DCBF40       # -> sSceneInfo
 XINPUT_GETSTATE_IAT = 0x00CB13B0
 
+INVENTORY = 0x00DCBF44         # -> the characters' items: Rebecca's 6 slots at +0x24, Billy's at +0x64,
+INV_SLOTS = {"Rebecca": 0x24, "Billy": 0x64}   # each slot (item number, amount) as two 32-bit numbers
+
+TITLE_HOLDER = 0x00DCF688      # [[[this]+0x20]+0x14] -> the title screen object (uGUITitle) while it exists
+VT_TITLE = 0x00CE2A08
+TITLE_STATE = 0x24C           # in it: which screen: 3 Start Game / Quit, 8 the main menu (16 when come back
+                              # to it), 6 difficulty, 11 Game Setup, 14 a message box
+# screen -> (where its cursor is, the choices top to bottom)
+TITLE_MENUS = {3: (0x288, ["Start Game", "Quit"]),
+               8: (0x288, ["Load Game", "New Game", "Options", "Extras"]),
+               16: (0x288, ["Load Game", "New Game", "Options", "Extras"]),
+               6: (0x2A0, ["Easy", "Normal", "Hard"])}
+
+TITLE_SETUP = 11              # the title screen object's state while Game Setup is up
+VT_SETUP = 0x00CDF930         # uGUISetUpEng: +0x26C the row; +0x270, +0x274, +0x278 each row's choice
+SETUP_ROWS = [("Display", ["Wide", "Original"]), ("Control Type", ["Alternate", "Original"]),
+              ("Subtitles", ["On", "Off"])]
+
 # Object classes (their vtables)
 VT_REBECCA = 0x00CCFD10       # uPlayerRebecca
 VT_BILLY = 0x00CCF5A0         # uPlayerBilly
@@ -51,6 +69,30 @@ def scene_words(no):
     if key in ROOM_NAMES:
         return ROOM_NAMES[key]
     return "%s, room %d" % (STAGE_NAMES.get(code, "Area " + " ".join(code.upper())), n)
+
+
+class _MBI(ctypes.Structure):
+    _fields_ = [("BaseAddress", ctypes.c_void_p), ("AllocationBase", ctypes.c_void_p),
+                ("AllocationProtect", ctypes.c_ulong), ("PartitionId", ctypes.c_ushort),
+                ("RegionSize", ctypes.c_size_t), ("State", ctypes.c_ulong),
+                ("Protect", ctypes.c_ulong), ("Type", ctypes.c_ulong)]
+
+
+k32.VirtualQueryEx.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+k32.VirtualQueryEx.restype = ctypes.c_size_t
+
+
+def regions(mem, max_size=0x10000000):
+    """The game's writable memory: [(start, size)]."""
+    addr, out, m = 0x10000, [], _MBI()
+    while addr < 0x7FFF0000:
+        if not k32.VirtualQueryEx(mem.h, ctypes.c_void_p(addr), ctypes.byref(m), ctypes.sizeof(m)):
+            break
+        base = m.BaseAddress or 0
+        if m.State == 0x1000 and m.Protect in (0x04, 0x08) and m.RegionSize <= max_size:
+            out.append((base, m.RegionSize))
+        addr = base + m.RegionSize
+    return out
 
 
 class Game:
@@ -135,6 +177,82 @@ class Game:
             if vt in PLAYERS:
                 out.append((PLAYERS[vt], obj))
         return out
+
+    def title(self):
+        """The title screen object, or None (in the game)."""
+        m = self.mem
+        try:
+            t = m.ptr(m.ptr(m.ptr(TITLE_HOLDER) + 0x20) + 0x14)
+            if m.u32(t) == VT_TITLE:
+                return t
+        except NotReady:
+            pass
+        return None
+
+    def title_menu(self):
+        """(screen, cursor, the choice's words) on a title menu, or None."""
+        t = self.title()
+        if not t:
+            return None
+        try:
+            state = self.mem.u32(t + TITLE_STATE)
+            if state not in TITLE_MENUS:
+                return (state, None, None)
+            off, items = TITLE_MENUS[state]
+            cur = self.mem.u32(t + off)
+        except NotReady:
+            return None
+        if not 0 <= cur < len(items):
+            return (state, cur, None)
+        return (state, cur, items[cur])
+
+    def find_object(self, vt, max_region=0x10000000):
+        """The first object of a class (by its vtable) found in the game's memory, or None. Slow
+        (it reads all of the game's data): callers keep what it finds."""
+        pat = struct.pack("<I", vt)
+        for base, size in regions(self.mem, max_region):  # noqa
+            try:
+                data = self.mem.read(base, size)
+            except NotReady:
+                continue
+            i = data.find(pat)
+            while i >= 0:
+                if i % 4 == 0:
+                    return base + i
+                i = data.find(pat, i + 1)
+        return None
+
+    _setup = None
+
+    def setup(self):
+        """(row, [choice of each row]) on the Game Setup screen, or None."""
+        t = self.title()
+        if not t:
+            return None
+        try:
+            if self.mem.u32(t + TITLE_STATE) != TITLE_SETUP:
+                return None
+            su = self._setup
+            if not su or self.mem.u32(su) != VT_SETUP:
+                su = self._setup = self.find_object(VT_SETUP)
+            if not su:
+                return None
+            row = self.mem.u32(su + 0x26C)
+            vals = [self.mem.u32(su + 0x270 + 4 * k) for k in range(3)]
+        except NotReady:
+            return None
+        if not 0 <= row < 3 or any(not 0 <= v < 2 for v in vals):
+            return None
+        return row, vals
+
+    def inventory(self, who="Rebecca"):
+        """[(item number, amount)] for the six slots (0 where empty)."""
+        try:
+            base = self.mem.ptr(INVENTORY)
+            data = self.mem.read(base + INV_SLOTS[who], 48)
+        except NotReady:
+            return []
+        return [struct.unpack_from("<ii", data, k * 8) for k in range(6)]
 
     def pos(self, obj):
         try:
