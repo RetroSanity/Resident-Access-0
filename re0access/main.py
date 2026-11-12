@@ -1,9 +1,10 @@
 """Resident Access 0: a screen reader companion for Resident Evil 0 HD Remaster (Steam).
 
-It runs next to the game, reads its memory, and speaks through your screen reader (or
-Windows' own voice). This is the first, early build: it finds the game, makes the controller
-add-on work with Steam Input, and says where you are as you move between rooms. The room
-lists, auto walk and the 3D beacon from Resident Access HD come next.
+It runs next to the game, reads its memory and the text the controller add-on passes on, and
+speaks through your screen reader (or Windows' own voice). Early builds: it finds the game,
+makes the controller add-on work with Steam Input, reads the game's messages and menus, and
+says where you are as you move between rooms. The room lists, auto walk and the 3D beacon
+from Resident Access HD come next.
 """
 import ctypes
 import logging
@@ -12,6 +13,8 @@ import os
 import time
 
 from .game import Game, scene_words
+from . import text as T
+from . import gmd
 from .link import Link
 from . import link as L
 from .mem import Memory, NotReady
@@ -38,6 +41,8 @@ class App:
         self.pad_state = None
         self.pad_tries = 0
         self.prev_buttons = 0
+        self.text_seen = {}         # string -> when last laid out
+        self.text_quiet_until = 0.0
 
     def say(self, text, interrupt=False):
         if not text:
@@ -76,6 +81,93 @@ class App:
         names = " and ".join(n for n, _ in chars)
         return "%s. %s here." % (scene_words(self.scene), names)
 
+    # -- the game's text ----------------------------------------------------------------
+    # Strings the game lays out are passed on by the controller add-on (it catches the game's
+    # text layout). Most are drawn again every frame while they are on screen, so a string is
+    # said when it appears, and again only after it has been gone for a moment.
+    GONE = 0.6
+
+    def poll_text(self):
+        now = time.monotonic()
+        fresh = []
+        for caller, holder, raw in self.link.texts():
+            last = self.text_seen.get(raw)
+            self.text_seen[raw] = now
+            if last is not None and now - last < self.GONE:
+                continue
+            if now < self.text_quiet_until:
+                continue            # (what was already on screen when the mod started)
+            if raw.startswith(("<B_DE>", "<B_CA>", "<B_")) or raw.startswith("<ICON"):
+                continue            # the button hints at the bottom of a screen
+            words = T.clean(raw)
+            if len(words) < 2 or words in fresh:
+                continue
+            fresh.append(self.with_amount(words))
+        if len(self.text_seen) > 3000:
+            self.text_seen = {k: v for k, v in self.text_seen.items() if now - v < 30}
+        if fresh and not all(w in ("Yes", "No") for w in fresh):
+            # (a dialog the game keeps laid out out of sight shows just "Yes" and "No": a real
+            # question comes with its words)
+            # (a menu's choice just said comes first: its description follows it)
+            self.say(" ".join(fresh), interrupt=time.monotonic() - getattr(self, "menu_said", 0) > 0.8)
+
+    # -- the title screen's menus (pictures, not text) ----------------------------------
+    def poll_title(self):
+        tm = self.game.title_menu()
+        key = tm[:2] if tm else None
+        if key != getattr(self, "title_seen", None):
+            self.title_seen = key
+            if tm and tm[2]:
+                self.say_menu(tm[2])
+        self.poll_setup(tm)
+
+    def say_menu(self, words):
+        self.menu_said = time.monotonic()
+        self.say(words, interrupt=True)
+
+    def poll_setup(self, tm):
+        from .game import SETUP_ROWS, TITLE_SETUP
+        st = self.game.setup() if tm and tm[0] == TITLE_SETUP else None
+        was = getattr(self, "setup_seen", None)
+        self.setup_seen = st
+        if not st:
+            return
+        row, vals = st
+        name, choices = SETUP_ROWS[row]
+        if was is None or was[0] != row:
+            self.say_menu("%s: %s" % (name, choices[vals[row]]))
+        elif was[1][row] != vals[row]:
+            self.say_menu(choices[vals[row]])
+
+    # -- items --------------------------------------------------------------------------
+    GUNS = {3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 19, 22, 23}
+
+    def item_names(self):
+        if getattr(self, "_items", None) is None:
+            self._items = []
+            try:
+                exe = self.mem.exe_path()
+                if exe:
+                    self._items = gmd.texts(os.path.dirname(exe), "message_item_name")
+            except Exception:
+                logging.exception("item names")
+        return self._items
+
+    def with_amount(self, words):
+        """'Handgun' -> 'Handgun, 15 rounds' when it is one of the items you carry."""
+        names = self.item_names()
+        if not names:
+            return words
+        for who, _ in self.game.characters() or [("Rebecca", None)]:
+            for item, amount in self.game.inventory(who):
+                if 0 < item < len(names) and names[item] == words:
+                    if item in self.GUNS:
+                        return "%s, %d %s" % (words, amount, "round" if amount == 1 else "rounds")
+                    if amount > 1 or "Ammo" in words or "Grenade" in words:
+                        return "%s, %d" % (words, amount)
+                    return words
+        return words
+
     # -- controller keys ---------------------------------------------------------------------
     def poll_keys(self):
         b = self.link.real().get("buttons", 0)
@@ -104,10 +196,13 @@ class App:
                 continue
             if not self.connected:
                 self.connected = True
+                self.text_quiet_until = time.monotonic() + 2.0
                 self.say("Resident Access 0 ready.")
             try:
                 self.poll_pad_fix()
                 self.poll_room()
+                self.poll_title()
+                self.poll_text()
                 self.poll_keys()
             except NotReady:
                 pass
