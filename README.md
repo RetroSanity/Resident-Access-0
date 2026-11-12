@@ -6,7 +6,7 @@ It is built from [Resident Access HD](https://github.com/RetroSanity/Resident-Ac
 
 ## Status
 
-Early development, no release yet. What works so far:
+Early development. Download the latest version from the [Releases page](../../releases/latest), unzip it and run Install Resident Access 0.bat. What works so far:
 
 - Finds the game and says when it is ready.
 - Says which room you are in as you move between rooms.
