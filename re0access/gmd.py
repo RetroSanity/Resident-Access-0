@@ -36,3 +36,43 @@ def archive(game_dir, lang="eng"):
 
 def texts(game_dir, name, lang="eng"):
     return archive(game_dir, lang).get("%s_%s" % (name, lang), ({}, []))[1]
+
+
+_pages = {}
+
+
+def file_pages(game_dir, item, lang="eng"):
+    key = (game_dir, item, lang)
+    if key not in _pages:
+        _pages[key] = _file_pages(game_dir, item, lang)
+    return _pages[key]
+
+
+def _file_pages(game_dir, item, lang="eng"):
+    """The pages of a file (item numbers 150 and on: "fa01" is item 150), as plain text, from
+    message_file_text. A file's last page is kept under the next file's number, page 1."""
+    import re
+    labels = archive(game_dir, lang).get("message_file_text_%s" % lang, ({}, []))[0]
+    no = item - 149
+
+    def pages_of(n):
+        out = []
+        for key, text in labels.items():
+            m = re.match(r"fa([0-9a-f]{2})_(\d+)(_pc)?$", key)
+            if m and int(m.group(1), 16) == n:
+                out.append((int(m.group(2)), bool(m.group(3)), text))
+        if any(pc for _, pc, _ in out):
+            pcs = {p for p, pc, _ in out if pc}
+            out = [o for o in out if o[1] or o[0] not in pcs]
+        return sorted(out)
+    pages = [t for p, pc, t in pages_of(no) if p >= 2]
+    nxt = [t for p, pc, t in pages_of(no + 1) if p == 1]
+    pages += nxt
+    clean = []
+    for t in pages:
+        t = re.sub(r"<PAGE>", " ", t)
+        t = re.sub(r"<[^>]*>", "", t)
+        t = re.sub(r"\s+", " ", t).strip()
+        if t and t not in ("Invalid Message", "ダミー"):
+            clean.append(t)
+    return clean
