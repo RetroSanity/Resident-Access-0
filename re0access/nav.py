@@ -30,9 +30,10 @@ def _crosses(ax, az, bx, bz, cx, cz, dx, dz):
 
 
 class NavMesh:
-    def __init__(self, triangles, margin=300.0, clearance=CLEARANCE):
+    def __init__(self, triangles, margin=300.0, clearance=CLEARANCE, up_only=False):
         """triangles: [((x, y, z), (x, y, z), (x, y, z))]. clearance: how far from a wall the
-        player's middle keeps (a tighter mesh squeezes through narrow gaps)."""
+        player's middle keeps (a tighter mesh squeezes through narrow gaps). up_only: flat
+        triangles facing down are ceilings, not ground (left out)."""
         self.clearance = clearance
         floors, walls = [], []
         for a, b, c in triangles:
@@ -46,6 +47,8 @@ class NavMesh:
                 ny_rel = abs(ny) / length
             if ny_rel < 0.35:
                 walls.append((a, b, c))
+            elif up_only and ny <= 0:
+                continue
             else:
                 floors.append((a, b, c))
         self.ok = bool(floors)
