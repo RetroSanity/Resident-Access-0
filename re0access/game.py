@@ -176,6 +176,7 @@ class Game:
     def __init__(self, mem):
         self.mem = mem
         self.pad_fixed_for = None
+        self.offset_fix = None      # (x, y, z) to use instead of the game's room offset, or None
 
     # -- the controller ----------------------------------------------------------------------
     def fix_pad(self):
@@ -381,7 +382,7 @@ class Game:
             return None
         return v if v in (0, 1) else None
 
-    def find_cached(self, vt, stamp):
+    def find_cached(self, vt, stamp, every=30.0):
         """find_object in the background (it reads all the game's memory, which takes a few
         seconds): None until it has been found; tried again at most every 30 seconds."""
         found = getattr(self, stamp + "_found", None)
@@ -389,7 +390,7 @@ class Game:
             setattr(self, stamp + "_found", None)
             return found
         now = time.monotonic()
-        if getattr(self, stamp + "_busy", False) or now - getattr(self, stamp, -999.0) < 30.0:
+        if getattr(self, stamp + "_busy", False) or now - getattr(self, stamp, -999.0) < every:
             return None
         setattr(self, stamp, now)
         setattr(self, stamp + "_busy", True)
@@ -404,6 +405,28 @@ class Game:
         threading.Thread(target=run, daemon=True).start()
         return None
 
+
+    def item_view(self):
+        """Where you are on the item screen: ("own", slot) on your items (or their commands),
+        ("partner", slot) picking which of your partner's slots to change with, ("number", n)
+        choosing how many to pass over; None when it is not open."""
+        try:
+            sub = self.mem.u32(self.mem.ptr(SUBMENU_HOLDER) + 0x60)
+            if not sub or self.mem.u32(sub) != VT_SUBMENU or self.mem.u32(sub + 0x2AC) != 0:
+                return None
+            st = self.mem.u32(sub + SUBMENU_OPEN)
+            if st in (2, 6):
+                cur = self.mem.u32(sub + SUBMENU_CURSOR)
+                return ("own", cur) if 0 <= cur < 6 else None
+            if st == 7:
+                cur = self.mem.u32(sub + 0x2BC)
+                return ("partner", cur) if 0 <= cur < 6 else None
+            if st == 8:
+                return ("number", self.mem.s32(sub + 0x324), self.mem.u32(sub + SUBMENU_CURSOR),
+                        self.mem.u32(sub + 0x2BC))
+        except NotReady:
+            return None
+        return None
 
     def item_cursor(self):
         """The slot the cursor is on in the item screen (0-5), or None when it is not open."""
@@ -447,7 +470,7 @@ class Game:
         for k in range(ARRANGE_COUNT):
             o = k * ARRANGE_SIZE
             room, _r2, kind, item, flag = struct.unpack_from("<iiIII", data, o + 4)
-            if kind != 0x71 or room != scene or 0xA0 <= flag <= 0xAF:
+            if kind not in (0x71, 0x78) or room != scene or 0xA0 <= flag <= 0xAF:   # (0x78: key items)
                 continue        # (0xA0 and on: the extras unlocked by finishing the game)
             put = struct.unpack_from("<i", data, o + 0x20)[0]
             now = struct.unpack_from("<i", data, o + 0x44)[0]
@@ -456,6 +479,13 @@ class Game:
         return out
 
     def room_offset(self):
+        if self.offset_fix is not None:
+            return self.offset_fix
+        return self.room_offset_raw()
+
+    def room_offset_raw(self):
+        """The game's own: it is the room of whoever went in first, so with Rebecca and Billy
+        in different rooms it can be the other one's (the mod checks it against the floor)."""
         try:
             return struct.unpack("<3f", self.mem.read(self.mem.ptr(SCENE_INFO) + ROOM_OFFSET, 12))
         except NotReady:
@@ -551,7 +581,7 @@ class Game:
         try:
             sv = self._save
             if not sv or self.mem.u32(sv) != VT_SAVE:
-                sv = self._save = self.find_cached(VT_SAVE, "_save_tried") if self.title() is None \
+                sv = self._save = self.find_cached(VT_SAVE, "_save_tried", 3.0) if self.title() is None \
                     else self.find_object(VT_SAVE)
             if not sv:
                 return None
