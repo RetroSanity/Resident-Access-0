@@ -23,6 +23,7 @@ OP_DOORS = (0x38, 0x39)    # 00 38 SS RR ..: go through to stage SS, room RR (39
 OP_JUMPS = (0x04, 0x06, 0x0D)   # 00 04 HH LL and others: jumps to HHLL
 
 ITEM_RECORD = 0x71         # an item lying in the room (loctbl)
+KEY_ITEM_RECORD = 0x78     # a key item lying there (Train Key, Briefcase, Hookshot...)
 FIXED_ITEM = 0x70          # an item that is always there (locfix)
 
 
@@ -142,26 +143,53 @@ class Script:
         return out
 
 
+_TRANS_PAT = re.compile(rb"\x01\x00\x00\x00....\x01\x00\x00\x00\x02\x00\x00\x00\x01\x00\x00\x00", re.S)
+
+
+def room_trans(d, ents, code):
+    """Where the room sits in the game's world (x, y, z cm): mTrans, the first thing in its
+    scene file. Positions in the room's files are counted from there."""
+    k = "scene\\" + code
+    if k not in ents:
+        return None
+    try:
+        b = sbc.unpack(d, ents[k])
+        m = _TRANS_PAT.search(b, max(0, b.rfind(b"data\x00")))
+        if not m:
+            return None
+        v = struct.unpack_from("<3f", b, m.end())
+    except Exception:
+        return None
+    if not all(abs(c) < 100000 for c in v):
+        return None
+    return v
+
+
 class RoomData:
     """Everything known about one room from the files. code is like "tr07"."""
 
     def __init__(self, game_dir, code, scene_no, scene_of, room_words, table="arrange\\loctbl0100"):
         self.code = code
         self.things = []
+        self.trans = None
+        self.base_code = code
         arc = os.path.join(game_dir, "nativePC", "arc", "scene", code + ".arc")
         try:
             d, ents = sbc.read_arc(arc)
         except OSError:
             return
+        self.trans = room_trans(d, ents, code)
         zones = {}
         key = "scene\\event\\%sb" % code
         if key in ents:
             zones = _zones(sbc.unpack(d, ents[key]))
         script = None
         scode = code
+        self.base_code = code
         for k in ents:
             if k.startswith("event\\"):
                 scode = k.split("\\")[-1]
+                self.base_code = scode      # (a room later in the story carries its first one's)
                 try:
                     script = Script(sbc.unpack(d, ents[k]))
                 except Exception:
@@ -169,6 +197,11 @@ class RoomData:
                 break
         texts = gmd.texts(game_dir, "scene_" + scode) or gmd.texts(game_dir, "scene_" + code)
         used = set()
+        # (zones where an item can be used - the hookshot at the window: a kind 0x08 entry)
+        use_zones = {index for kind, off, index in script.entries if kind == 0x08} if script else set()
+        # (the floor: most zones lie on it; a door well below or above it is a stairway)
+        floors = sorted(_box(z)[0][1] for z in zones.values()) if zones else [0.0]
+        floor = floors[len(floors) // 2]
         if script:
             for kind, off, index in script.entries:
                 if index not in zones or index in used:
@@ -179,14 +212,28 @@ class RoomData:
                 centre = ((lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2)
                 if kind in DOOR_KINDS:
                     to = script.doors(off)
+                    msgs = [names.clean(texts[m]) for m in script.messages(body) if m < len(texts)]
+                    low = " ".join(msgs).lower()
                     if to:
                         st, rm = to[0]
                         target = scene_of(st, rm)
-                        name = "Door to " + room_words(target) if target is not None else "Door"
-                        self.things.append(Thing("door", name, centre, (lo, hi), target=target, zone=index))
+                        where = (" to " + room_words(target)) if target is not None else ""
+                        if "ladder" in low:
+                            way = " up" if ("climb up" in low or "lead up" in low or "leads up" in low) else \
+                                  " down" if ("climb down" in low or "lead down" in low or "leads down" in low) else ""
+                            name = "Ladder" + way + where
+                        elif hi[1] - lo[1] > 60:
+                            # (a sloping zone: a stairway; flat ones on another floor are doors there)
+                            mid = (lo[1] + hi[1]) / 2
+                            name = ("Stairs down" if mid < floor - 30 else
+                                    "Stairs up" if mid > floor + 30 else "Stairs") + where
+                        else:
+                            name = "Door" + where
+                        self.things.append(Thing("door", name, centre, (lo, hi), target=target, zone=index, says=msgs))
                     else:
-                        msgs = [names.clean(texts[m]) for m in script.messages(body) if m < len(texts)]
-                        self.things.append(Thing("door", "Door" + (", locked" if any("lock" in m.lower() for m in msgs) else ""),
+                        if not msgs:
+                            continue        # (leads nowhere and says nothing: a story event, not a door)
+                        self.things.append(Thing("door", "Door" + (", locked" if "lock" in low else ""),
                                                  centre, (lo, hi), target=None, zone=index, says=msgs))
                     used.add(index)
                 elif kind in CHECK_KINDS:
@@ -198,14 +245,27 @@ class RoomData:
                                                  outline=_footprint(zones[index])))
                         used.add(index)
                         continue
+                    if not words and kind == 0x02 and script.doors(off):
+                        # (no message but it opens a close-up: a panel to work - the engine's brake)
+                        name = "Brake panel" if self.base_code == "tr00" else "Control panel"
+                        self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=[],
+                                                 outline=_footprint(zones[index]), puzzle=True))
+                        used.add(index)
+                        continue
                     if not words:
                         continue        # (no message: a story event starts there, not a thing to check)
                     name = names.best_name(words) or "Something to check"
+                    low = " ".join(words).lower()
+                    if "service lift" in low or "dumbwaiter" in low:
+                        name = "Service lift"
+                    # (one that asks you something - reconnect the cable? press the button? - is
+                    # a puzzle or a machine to work, not just something to look at)
+                    puzzle = any("<SEL" in texts[m] for m in msgs) or index in use_zones
                     # a box as wide as the room (a whole-room message) is not a place to walk to
                     if len(parts) > 1 or (hi[0] - lo[0]) * (hi[2] - lo[2]) > 600 * 600:
                         continue
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
-                                             outline=_footprint(zones[index])))
+                                             outline=_footprint(zones[index]), puzzle=puzzle))
                     used.add(index)
         self.items = load_items(game_dir, scene_no, table)
         for it in self.items:
@@ -239,7 +299,7 @@ def load_items(game_dir, scene_no, table="arrange\\loctbl0100"):
     labels, _texts = gmd.archive(game_dir).get("message_item_name_eng", ({}, []))
     out = []
     for rec in _loc[(game_dir, table)].get(scene_no, []):
-        if rec[0] != ITEM_RECORD or 0xA0 <= rec[2] <= 0xAF and rec[3] == 0:
+        if rec[0] not in (ITEM_RECORD, KEY_ITEM_RECORD) or 0xA0 <= rec[2] <= 0xAF and rec[3] == 0:
             continue
         item = rec[1]
         amount = struct.unpack_from("<h", rec, 6)[0]
