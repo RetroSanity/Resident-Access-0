@@ -53,6 +53,16 @@ def triangles(sbc):
                 break
         if not ok:
             continue
+        # (three good ones can happen by chance part way into the table: all of them must be)
+        for i in range(ntris):
+            o = start + i * 32
+            nx, ny, nz = struct.unpack_from("<3f", sbc, o + 4)
+            a, b, c = struct.unpack_from("<3H", sbc, o + 16)
+            if abs(nx * nx + ny * ny + nz * nz - 1) > 0.02 or max(a, b, c) >= nverts:
+                ok = False
+                break
+        if not ok:
+            continue
         vo = start + ntris * 32
         verts = [struct.unpack_from("<3f", sbc, vo + i * 16 + 4) for i in range(nverts)]
         out = []
