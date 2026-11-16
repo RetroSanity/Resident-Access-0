@@ -50,7 +50,7 @@ class Walker:
     hurry = False       # run all the way (past the sharks in the Aqua Ring)
     careful = False     # never run (carrying the fuel capsule: running can make it explode)
     slow = False        # creep: forward in short steps, never run (the trophy room's eagle follows you)
-    run_held = False    # the player holding the run button (X) while auto walk walks them: then it runs
+    run_held = False    # the player holding the run button (B) while auto walk walks them: then it runs
     force_run = False   # run whether or not they hold it (the trophy room's dash to the step, as asked)
     guide = False       # the 3D beacon: the player walks, following the sound; the walker only keeps
                         # track of the way (aim: where the next turn of it is) and never takes the stick
@@ -109,21 +109,22 @@ class Walker:
         if self.link is None:
             return
         if self.guide:
-            from .link import X
+            from .link import B
             self.held = set()
             self.link.stick = None
             self.link.add = 0
-            self.link.block = self.link.block & ~X
+            self.link.block = self.link.block & ~B
             self.link.push()
             return
         lx = (-32000 if "left" in wanted else 0) + (32000 if "right" in wanted else 0)
         ly = (32000 if "up" in wanted else 0) + (-32000 if "down" in wanted else 0)
         self.link.stick = (lx, ly) if wanted & {"left", "right", "up", "down"} else None
-        from .link import X, A
-        self.link.add = (X if "run" in wanted else 0) | (A if "a" in wanted else 0)
+        from .link import B, A
+        # (B is the game's run button; X would open the item screen)
+        self.link.add = (B if "run" in wanted else 0) | (A if "a" in wanted else 0)
         # (the player's own run button held while walking: the walker decides when it runs, so the
         # last steps and the sharp bends are still walked)
-        self.link.block = (self.link.block | X) if self.goal is not None else (self.link.block & ~X)
+        self.link.block = (self.link.block | B) if self.goal is not None else (self.link.block & ~B)
         self.link.push()
 
     def bumped(self, x, z, now):
