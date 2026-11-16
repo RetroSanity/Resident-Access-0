@@ -8,22 +8,23 @@ It is built from [Resident Access HD](https://github.com/RetroSanity/Resident-Ac
 
 Get the latest version from the [Releases page](../../releases/latest). Unzip it anywhere, run **Install Resident Access 0.bat**, then start the game from Steam. The mod starts with it and says "Resident Access 0 ready". It updates itself when a new version comes out.
 
-## What it does (version 0.3)
+## What it does (version 0.4)
 
-- **Reads the game:** the title screen and menus, save slots, every message in play (what you find, locked doors, questions with their Yes and No), the pause menu and cutscene subtitles.
-- **Item screen:** each item with how many, "equipped" on the weapon in your hand, "Empty" on empty slots. On the Files page, each file is named and read in full. Files you pick up are read page by page.
-- **Room names** as you go in.
-- **The list (the e list):** doors, items, things to check (the typewriter too), enemies with their health, and your partner. Everything is given with how far it is and which way. Hold the left bumper and use the D-pad to go through it. The lists change in each new room.
-- **Auto walk:** takes you to anything in the list, finding the way round walls, then stops facing it so you can just press A. A beep plays while it walks you.
+- **Reads the game:** the title screen and menus, every message in play (what you find, locked doors, questions with their Yes and No), the pause menu, the typewriter and every save slot as you move to it, and cutscene subtitles.
+- **Item screen:** each item with how many, "equipped", "Empty". With your partner, it says whose items you're looking at, and changing items with them reads their slots and how many you're passing over. Files are named and read in full.
+- **Room names** as you go in, said once.
+- **The list (the e list):** Doors (with stairs and ladders), Items (key items too), Things to check, Puzzles (things that ask you something, places to use an item, panels like the train brakes), Enemies with their health, and your partner. Everything is given with how far it is and which way, even with Rebecca and Billy in different rooms. Hold the left bumper and use the D-pad to go through it.
+- **Auto walk:** takes you to anything in the list, then stops facing it so you can just press A. Hold B while it walks you to run. A beep plays while it walks you.
 - **3D beacon:** a sound all round you leads you there if you'd rather walk yourself (use headphones).
-- **Combat:** an aim beep when a shot would hit, and each enemy's health in percent as you shoot it, until it goes down.
-- **Mod settings** in the Start menu: sound volumes and turning the mod's sounds on or off.
+- **Combat:** an aim beep when a shot would hit, and each enemy's health as you shoot it.
+- **Levers:** "Holding" when you keep hold of one, and "Let go" when you move away.
+- **Mod settings** in the Start menu.
 
 The README.txt in the download explains every control.
 
 ## Still to come
 
-More room names, more enemy names, puzzles in the list, the map, item box and partner item exchange screens, auto walk on stairs and ladders, and fuller support for playing as Billy.
+The train brakes' number pads, more room names and enemy names, the map and item box screens, auto walk on stairs and ladders, and the rest of the game after the train.
 
 ## What you will need
 
