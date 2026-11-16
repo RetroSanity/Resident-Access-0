@@ -15,7 +15,7 @@ def clean(text):
 ARTICLES = ["an assortment of", "a collection of", "a selection of", "a huge collection of", "a couple of",
             "a number of", "a bunch of", "a pile of", "some kind of", "just some", "various", "some", "an", "a", "the"]
 # Words at which the name of the thing has ended.
-VERBS = {"is", "are", "was", "were", "has", "have", "had", "blocks", "block", "stands", "stand", "shines",
+VERBS = {"pertaining", "belonging", "concerning", "regarding", "is", "are", "was", "were", "has", "have", "had", "blocks", "block", "stands", "stand", "shines",
          "lie", "lies", "look", "looks", "decorates", "smells", "points", "gives", "doesn't", "don't",
          "appears", "appear", "seem", "seems", "shows", "crushing", "crush", "drips", "drip", "leaking",
          "made", "carved", "lined", "line", "stretches", "glow", "containing", "featuring", "depicting",
@@ -27,6 +27,10 @@ VERBS = {"is", "are", "was", "were", "has", "have", "had", "blocks", "block", "s
 PREPOSITIONS = {"of", "on", "in", "for", "from", "against", "over", "at", "to", "by", "through", "under"}
 # Messages that need a hand-picked name: (pattern in the lower-case first sentence, name).
 FIXED = [
+    (r"release lever", "Hookshot release"),
+    (r"hand-operated brake", "Brake, magnetic card reader"),
+    (r"hookshot is attached to the wall", "Hookshot on the wall"),
+    (r"^there's nothing else here|no need to use it anymore", "Nothing else"),
     (r"go outside|outside the train", "Door to outside"),
     (r"against the window|out the window|through the window", "Window"),
     (r"poor (guy|man|woman|soul)|this (guy|man|woman) |dead body|corpse", "Dead body"),
@@ -75,10 +79,35 @@ FIXED = [
 ]
 
 
+def quoted_name(t):
+    """A message that starts with words in quotes is something written: a sign, a menu, a
+    picture's title ("Picture, Join the Party!")."""
+    end = t.find('"', 1)
+    title = t[1:end] if end > 1 else t[1:]
+    rest = t[end + 1:] if end > 1 else ""
+    title = re.split(r"(?<=[.!?])\s", title.strip())[0]
+    words = title.strip(' ".').split()
+    if len(words) > 6:
+        words = words[:2] if len(words) > 6 else words
+    title = " ".join(words).rstrip(",;:")
+    low = t.lower()
+    if "picture" in low or "painting" in low or "photo" in low:
+        kind = "Picture"
+    elif "special" in low or "menu" in low:
+        kind = "Menu"
+    elif "poster" in low:
+        kind = "Poster"
+    else:
+        kind = "Sign"
+    return "%s, %s" % (kind, title) if title else kind
+
+
 def short_name(text):
     """A short name for a thing, from the message the game shows when you
     check it, or None when the message is not about a thing at all."""
     t = re.sub(r"\[[0-9A-F]+\]|\s*/\s*", " ", text).strip()
+    if t.startswith('"') and not t.lower().startswith('"caution'):
+        return quoted_name(t)
     t = re.split(r"(?<=[.!?])\s", t)[0].strip()
     t = re.sub(r"^here's", "There's", t)
     if not t:
@@ -96,6 +125,10 @@ def short_name(text):
             name = m.group(int(name[4:]))
             return name[0].upper() + name[1:]
         return name
+    m = re.match(r"^(these|this|it|they) (appears?|seems?) to be (a |an |the |some )?", low)
+    if m:
+        t = t[m.end():]
+        low = t.lower()
     m = re.match(r"^(it|this) looks? like (a |an |the )?", low)
     if m:
         t = t[m.end():]
@@ -107,6 +140,8 @@ def short_name(text):
         t = t[m.end():]
     elif re.match(r"^this ", t, flags=re.I):
         t = t[5:]
+    elif re.match(r"^these ", t, flags=re.I):
+        t = t[6:]
     low = t.lower()
     for a in ARTICLES:
         if low.startswith(a + " "):
@@ -130,13 +165,15 @@ def short_name(text):
     return name[0].upper() + name[1:]
 
 
-WEAK = {"Not yet", "Nothing much", "Train"}
+WEAK = {"Not yet", "Nothing much", "Train", "Nothing else", "No need to use"}
 
 
 def best_name(texts):
     """The best short name from several messages a thing can show."""
     if any("go outside" in t.lower() for t in texts if t):
         return "Door to outside"
+    if any("train is out of control" in t.lower() for t in texts if t):
+        return "Rear exit"
     names_ = [short_name(t) for t in texts if t]
     names_ = [n for n in names_ if n and n.isascii()]
     for n in names_:
