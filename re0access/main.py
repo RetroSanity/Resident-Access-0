@@ -8,6 +8,7 @@ check, enemies), auto walk and the 3D beacon from Resident Access HD (see roomli
 """
 import ctypes
 import logging
+import math
 import re
 import logging.handlers
 import os
@@ -73,8 +74,20 @@ class App(RoomList, ModMenu):
     def poll_room(self):
         no = self.game.scene()
         if no is None or no == self.scene:
+            self.scene_pending = None
             return
         first = self.scene is None
+        if not first and self.scene_fits(no) is False:
+            # (another room loaded for an event while you stay put: not a room change; taken
+            # as one only if it lasts)
+            pend = getattr(self, "scene_pending", None)
+            if not pend or pend[0] != no:
+                self.scene_pending = (no, time.monotonic())
+                logging.info("scene %s loaded but you are not in it", no)
+                return
+            if time.monotonic() - pend[1] < 15.0:
+                return
+        self.scene_pending = None
         self.scene = no
         if not self.game.characters():
             return                      # (title screen, or a scene still loading)
@@ -112,6 +125,7 @@ class App(RoomList, ModMenu):
             if m:
                 self.choice_words = m.group(1).split("_")
                 self.question_at = now
+                self.question_text = raw
         if self.slot_list_up(batch):
             self.read_slots(batch, now)
             return
@@ -131,6 +145,8 @@ class App(RoomList, ModMenu):
             if raw.startswith(("<B_DE>", "<B_CA>", "<B_")) or raw.startswith("<ICON"):
                 continue            # the button hints at the bottom of a screen
             words = T.clean(raw)
+            if words.startswith(":"):
+                continue            # (":Change number", ":All": the buttons, said with the number)
             if self.note_text(words, now):
                 continue            # (the mod is speaking its own row of the Option menu)
             if len(words) < 2 or words in fresh:
@@ -142,7 +158,7 @@ class App(RoomList, ModMenu):
                 if said is not None and now - said < 60:
                     continue
                 self.long_said[words] = now
-            fresh.append(self.with_equip(self.with_amount(words), words))
+            fresh.append(self.whose_items(self.with_equip(self.with_amount(words), words)))
         if len(self.text_seen) > 3000:
             self.text_seen = {k: v for k, v in self.text_seen.items() if now - v < 30}
         fresh = self.fill_item_name(fresh)
@@ -193,6 +209,8 @@ class App(RoomList, ModMenu):
             cur = None
         if cur is None and getattr(self, "choice_was", None) is not None:
             self.question_at = -99.0        # (that question is over)
+            if self.choice_was == 0 and "lever" in getattr(self, "question_text", "").lower():
+                self.start_holding()
         if cur is not None:
             self.game.save_row()        # (finds the save list ahead of time, for the typewriter)
         was = getattr(self, "choice_was", None)
@@ -203,6 +221,35 @@ class App(RoomList, ModMenu):
         if cur < len(words):
             # (the first one comes after the question itself)
             self.say(words[cur], interrupt=was is not None)
+
+    def start_holding(self):
+        """Yes to pulling a lever: the character holds it until they move away."""
+        c = self.game.controlled()
+        if not c:
+            return
+        pos = self.game.pos(c[1])
+        if not pos:
+            return
+        self.holding = (c[0], c[1], pos, time.monotonic())
+        self.say("Holding.", interrupt=False)
+
+    def poll_hold(self):
+        h = getattr(self, "holding", None)
+        if not h:
+            return
+        name, obj, pos, since = h
+        now_pos = self.game.pos(obj)
+        if not now_pos:
+            self.holding = None
+            return
+        if time.monotonic() - since < 6.0:
+            self.holding = (name, obj, now_pos, since)     # (pulling it moves them a little, and shows the lock)
+            return
+        if math.hypot(now_pos[0] - pos[0], now_pos[2] - pos[2]) > 12.0:
+            self.holding = None
+            c = self.game.controlled()
+            who = "" if c and c[0] == name else name + " "
+            self.say("%slet go." % who if who else "Let go.", interrupt=True)
 
     GAP = re.compile(r"\b(the|a|an)\s*([?.!])")
 
@@ -261,7 +308,10 @@ class App(RoomList, ModMenu):
         if tm is None:
             now = time.monotonic()
             if any(self.SLOT_LABEL.match(T.clean(raw)) for _, _, raw in batch):
+                if now > getattr(self, "save_watch_until", 0.0):
+                    self.slot_said = None                # (the list newly opened)
                 self.save_list_until = now + 2.0
+                self.save_watch_until = now + 120.0     # (poll_save says the slot as the cursor moves)
             return now < getattr(self, "save_list_until", 0.0)
         return False
 
@@ -294,6 +344,26 @@ class App(RoomList, ModMenu):
         self.slot_said = key
         self.say("Slot %d: %s" % (n, ", ".join(slots[n]) or "No Data"), interrupt=True)
 
+    def poll_save(self):
+        """The typewriter's save list: moving the cursor does not lay its slots out again, so
+        follow the cursor and say the slot it is on (from what was laid out)."""
+        now = time.monotonic()
+        if now > getattr(self, "save_watch_until", 0.0):
+            return
+        idx = self.game.save_row()
+        if idx is None:
+            return
+        slots = getattr(self, "slots", None) or {}
+        n = idx + 1
+        if n not in slots:
+            return
+        key = (n, tuple(slots[n]))
+        if key == getattr(self, "slot_said", None):
+            return
+        self.slot_said = key
+        self.save_watch_until = now + 120.0
+        self.say("Slot %d: %s" % (n, ", ".join(slots[n]) or "No Data"), interrupt=True)
+
     # -- items --------------------------------------------------------------------------
     GUNS = {3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 19, 22, 23}
 
@@ -308,19 +378,33 @@ class App(RoomList, ModMenu):
                 logging.exception("item names")
         return self._items
 
+    def items_shown(self):
+        """(whose items, slot) the item screen's cursor is on, or None: your own, or your
+        partner's while you pick which of theirs to change with."""
+        v = self.game.item_view()
+        if not v or v[0] not in ("own", "partner"):
+            return None
+        c = self.game.controlled()
+        if not c:
+            return None
+        if v[0] == "own":
+            return c[0], v[1]
+        others = [n for n, _ in self.game.characters() if n != c[0]]
+        return (others[0], v[1]) if others else None
+
     def with_equip(self, said, words):
         """On the item screen: ", equipped" after the weapon in hand, and the game's "Equip weapon"
         (shown for both) said as "Un-equip" when the weapon picked is the one in hand."""
-        cur = self.game.item_cursor()
-        c = self.game.controlled()
-        if cur is None or not c:
+        shown = self.items_shown()
+        if not shown:
             return said
-        eq = self.game.equipped(c[0])
+        who, cur = shown
+        eq = self.game.equipped(who)
         if eq is None or eq < 0:
             return said
         if words == "Equip weapon":
             return "Un-equip weapon" if cur == eq else said
-        inv = self.game.inventory(c[0])
+        inv = self.game.inventory(who)
         names = self.item_names()
         if eq < len(inv) and 0 < inv[eq][0] < len(names) and names[inv[eq][0]] == words and cur == eq:
             return said + ", equipped"
@@ -347,12 +431,47 @@ class App(RoomList, ModMenu):
         name = names[item] if 0 < item < len(names) else "Weapon"
         self.say("%s equipped." % name, interrupt=False)
 
+    def whose_items(self, said):
+        """On the item screen with your partner there, say whose items the cursor is on when that
+        changes: Y shows the other one's items (and makes them the one you play), and changing an
+        item with your partner has you pick one of their slots ("Billy's items. Knife")."""
+        if self.game.item_view() is None:
+            self.items_owner = None
+            return said
+        shown = self.items_shown()
+        if not shown or len(self.game.characters()) < 2:
+            return said
+        was = getattr(self, "items_owner", None)
+        self.items_owner = shown[0]
+        if was and was != shown[0]:
+            return "%s's items. %s" % (shown[0], said)
+        return said
+
+    def amount_words(self, words, item, amount):
+        if item in self.GUNS:
+            return "%s, %d %s" % (words, amount, "round" if amount == 1 else "rounds")
+        if amount > 1 or "Ammo" in words or "Grenade" in words:
+            return "%s, %d" % (words, amount)
+        return words
+
     def with_amount(self, words):
-        """'Handgun' -> 'Handgun, 15 rounds' when it is one of the items you carry."""
+        """'Handgun' -> 'Handgun, 15 rounds' when it is one of the items you carry (on the item
+        screen: the one in the slot the cursor is on, of whoever's items are showing)."""
         names = self.item_names()
         if not names:
             return words
-        for who, _ in self.game.characters() or [("Rebecca", None)]:
+        c = self.game.controlled()
+        shown = self.items_shown()
+        if shown:
+            inv = self.game.inventory(shown[0])
+            cur = shown[1]
+            if cur < len(inv) and 0 < inv[cur][0] < len(names) and names[inv[cur][0]] == words:
+                return self.amount_words(words, inv[cur][0], inv[cur][1])
+        order = [w for w, _ in self.game.characters()] or ["Rebecca"]
+        if c and c[0] in order:
+            order.remove(c[0])
+            order.insert(0, c[0])
+        for who in order:
             for item, amount in self.game.inventory(who):
                 if 0 < item < len(names) and names[item] == words:
                     if item in self.GUNS:
@@ -426,6 +545,7 @@ class App(RoomList, ModMenu):
                 self.poll_text()
                 self.poll_death()
                 self.poll_controller()
+                self.poll_offset()
                 self.poll_walk()
                 self.poll_taken()
                 self.poll_partner()
@@ -435,6 +555,8 @@ class App(RoomList, ModMenu):
                 self.poll_equip()
                 self.poll_files()
                 self.poll_choice()
+                self.poll_hold()
+                self.poll_save()
             except NotReady:
                 pass
             except Exception:
