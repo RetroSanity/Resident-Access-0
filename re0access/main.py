@@ -51,9 +51,24 @@ class App(RoomList, ModMenu):
         self.init_list()
         self.init_menu(SETTINGS)
 
+    # Pictures the game shows with some words: what they show, said after the words.
+    PICTURES = [
+        # (the Microfilm Image file's last page, and the projector with both microfilms in)
+        (("numbers appear on the seats", "something written on top of the picture of the seats"),
+         "Picture: the conference room's seats seen from above, the front of the room, with the "
+         "lectern and screen, at the top. Four rows of four seats, two each side of the middle "
+         "aisle, each with a number or letter on it. Front row, left to right: 0, 1, 2, 3. "
+         "Second row: 4, 5, 6, 7. Third row: 8, 9, A, B. Back row: C, D, E, F."),
+    ]
+
     def say(self, text, interrupt=False):
         if not text:
             return
+        low = text.lower()
+        for keys, picture in self.PICTURES:
+            if any(k in low for k in keys) and picture not in text:
+                text = "%s %s" % (text, picture)
+                break
         logging.info("say: %s", text)
         try:
             self.speech.say(text, interrupt=interrupt)
@@ -123,13 +138,34 @@ class App(RoomList, ModMenu):
             # A question's answers are named in its text: <SEL Yes_No_Use>
             m = re.search(r"<SEL ([A-Za-z_]+)>", raw)
             if m:
-                self.choice_words = m.group(1).split("_")
+                self.choice_words = [w if w.isupper() else re.sub(r"(?<=[a-z])(?=[A-Z])", " ", w).capitalize()
+                                     for w in m.group(1).split("_")]      # ("HourHand": "Hour hand")
                 self.question_at = now
                 self.question_text = raw
+                low = raw.lower()
+                if "minute hand" in low or "hour hand" in low:
+                    # (setting the clock: its time is said after the question, and as it changes)
+                    if now - getattr(self, "clock_at", -99.0) > 30.0:
+                        self.clock_said = None
+                    self.clock_at = now
+        if now - getattr(self, "clock_at", -99.0) < 120.0:
+            # (setting the clock: its buttons L, R, Hour hand, OK are said only as the cursor moves
+            # onto them, not all at once when they appear)
+            batch = [b for b in batch if T.clean(b[2]) not in ("L", "R", "Hour hand", "Minute hand", "OK",
+                                                                "Hour hand OK", "Minute hand OK")]
+        words = [T.clean(raw) for _, _, raw in batch]
+        if "Continue" in words and "Restart" in words:
+            # (a slot picked on the load list: Continue / Restart / Back, the cursor a picture)
+            self.load_choices = ["Continue", "Restart", "Back"]
+            self.load_choice_was = None
+        elif getattr(self, "load_choices", None) and any(self.SLOT_LABEL.match(w) for w in words):
+            self.load_choices = None
         if self.slot_list_up(batch):
             self.read_slots(batch, now)
             return
         reading = self.game.file_reader()
+        if reading is not None and self.game.files_screen() is not None:
+            return          # (a file read from the Files page: poll_files reads it, page by page)
         if reading is not None:
             self.read_file_page(batch, reading)
             return
@@ -202,10 +238,11 @@ class App(RoomList, ModMenu):
     def poll_choice(self):
         """Yes and No (and Use) under a question in the message window are pictures: say the one
         the cursor is on as it moves."""
-        cur = self.game.message_choice()
+        asked = time.monotonic() - getattr(self, "question_at", -99.0) <= 60.0
+        cur = self.game.message_choice(expect=asked)
         # (the window waits the same way at the end of any message: only a question just asked
         # has answers to say)
-        if cur is not None and time.monotonic() - getattr(self, "question_at", -99.0) > 60.0:
+        if cur is not None and not asked:
             cur = None
         if cur is None and getattr(self, "choice_was", None) is not None:
             self.question_at = -99.0        # (that question is over)
@@ -218,9 +255,27 @@ class App(RoomList, ModMenu):
         if cur is None or cur == was:
             return
         words = getattr(self, "choice_words", None) or ["Yes", "No"]
+        if was is None and time.monotonic() - getattr(self, "clock_at", -99.0) < 120.0:
+            return      # (the clock's buttons: said only as the cursor moves)
         if cur < len(words):
             # (the first one comes after the question itself)
             self.say(words[cur], interrupt=was is not None)
+
+    def poll_clock(self):
+        """Setting the clock's hands: say the time it shows when asked which hand to turn, and
+        again whenever a hand moves."""
+        if time.monotonic() - getattr(self, "clock_at", -99.0) > 120.0:
+            return
+        if self.game.message_choice() is None:
+            return
+        hands = self.game.clock_hands()
+        if hands is None or hands == getattr(self, "clock_said", None):
+            return
+        first = getattr(self, "clock_said", None) is None
+        self.clock_said = hands
+        h, m = hands
+        words = "%d:%02d" % (h or 12, m * 5)
+        self.say(("The clock shows %s." % words) if first else words, interrupt=not first)
 
     def start_holding(self):
         """Yes to pulling a lever: the character holds it until they move away."""
@@ -363,6 +418,122 @@ class App(RoomList, ModMenu):
         self.slot_said = key
         self.save_watch_until = now + 120.0
         self.say("Slot %d: %s" % (n, ", ".join(slots[n]) or "No Data"), interrupt=True)
+
+    def poll_load_choice(self):
+        """Continue / Restart / Back after picking a slot to load: say the one the cursor is on."""
+        ch = getattr(self, "load_choices", None)
+        if not ch:
+            return
+        from .game import TITLE_LOAD
+        tm = self.game.title_menu()
+        cur = self.game.save_choice()
+        if (tm is not None and tm[0] != TITLE_LOAD) or cur is None or not 0 <= cur < len(ch):
+            if cur is None or (tm is not None and tm[0] != TITLE_LOAD):
+                self.load_choices = None
+            return
+        if cur != getattr(self, "load_choice_was", None):
+            first = getattr(self, "load_choice_was", None) is None
+            self.load_choice_was = cur
+            self.say_menu(("Load: " if first else "") + ch[cur])
+
+    # -- the brake's number pad --------------------------------------------------------
+    # Keys 1 to 9 in rows of three (1 2 3 / 4 5 6 / 7 8 9), the cursor starting on 5. The cursor is
+    # a picture: follow it from the D-pad (and the stick), and set it right from each number put in.
+    def poll_brake(self):
+        from . import link as L
+        rd = getattr(self, "room_data", None)
+        look = bool(rd) and any(t.kind == "check" and any(w in t.name.lower() for w in ("brake", "panel", "card"))
+                                                  for t in rd.things)
+        pad = self.game.brake_pad(look=look)
+        st = getattr(self, "brake", None)
+        now = time.monotonic()
+        pm = self.game.pause_menu()
+        paused = bool(pm and pm[0] != 0)
+        if pad is None:
+            if st:
+                # (gone: closed, or only hidden behind the Start menu; kept a while to tell which)
+                st.setdefault("lost", now)
+                st["paused"] = st.get("paused") or paused
+                if now - st["lost"] > 120.0:
+                    self.brake = None
+            return
+        target, total = pad
+        if st and "lost" in st:
+            if st.get("paused") and st["target"] == target and now - st["lost"] < 120.0:
+                del st["lost"]                      # (back from the Start menu: same pad, same cursor)
+                st.pop("paused", None)
+            else:
+                st = self.brake = None              # (closed and opened again: the cursor back on 5)
+        real = self.link.real()
+        buttons = real.get("buttons", 0)
+        lx, ly = real.get("lx", 0), real.get("ly", 0)
+        dirs = buttons & (L.UP | L.DOWN | L.LEFT | L.RIGHT)
+        if lx > 20000: dirs |= L.RIGHT
+        elif lx < -20000: dirs |= L.LEFT
+        if ly > 20000: dirs |= L.UP
+        elif ly < -20000: dirs |= L.DOWN
+        if st is None:
+            st = self.brake = {"key": 5, "total": total, "count": 0, "held": dirs, "target": target,
+                               "a": bool(buttons & L.A), "sum": total, "own": False, "pending": []}
+            self.say("Number pad. Put in 10 numbers that add up to %d. Total %d. On 5." % (target, total),
+                     interrupt=True)
+            return
+        pressed = dirs & ~st["held"]
+        st["held"] = dirs
+        a_now = bool(buttons & L.A)
+        a_pressed = a_now and not st["a"]
+        st["a"] = a_now
+        if paused:
+            return                                  # (the Start menu takes the D-pad)
+        if pressed:
+            r, c = divmod(st["key"] - 1, 3)
+            if pressed & L.UP: r = (r - 1) % 3          # (the cursor wraps round at the edges)
+            elif pressed & L.DOWN: r = (r + 1) % 3
+            elif pressed & L.LEFT: c = (c - 1) % 3
+            elif pressed & L.RIGHT: c = (c + 1) % 3
+            st["key"] = r * 3 + c + 1
+            self.say(str(st["key"]), interrupt=True)
+        if a_pressed and st["count"] < 10:
+            st["pending"].append((now, st["key"]))
+        if total != st["total"]:
+            # (the rear pad shows its total: go by that, and by it set the cursor right)
+            d = total - st["total"]
+            st["total"] = total
+            st["pending"] = []
+            if 1 <= d <= 9:
+                st["count"] += 1
+                st["key"] = d                       # (the key just pressed is where the cursor is)
+            elif d < 0 and total > 0:
+                st["count"] = max(0, st["count"] - 1)
+            elif total == 0:
+                st["count"] = 0
+            st["sum"] = total
+            self.say(self.brake_words(st), interrupt=True)
+        elif st["pending"] and now - st["pending"][0][0] > 0.8:
+            # (the front pad's screen is broken, its total never shown: add up the keys pressed)
+            _, key = st["pending"].pop(0)
+            st["own"] = True
+            st["count"] += 1
+            st["sum"] += key
+            self.say(self.brake_words(st, key), interrupt=True)
+        if target != st["target"]:
+            st["target"] = target
+            self.say("Target %d." % target)
+
+    def brake_words(self, st, key=None):
+        total, target, n = st["sum"], st["target"], st["count"]
+        if key is not None:
+            words = "%d put in. Total %d, %d number%s." % (key, total, n, "" if n == 1 else "s")
+        else:
+            words = "Total %d, %d number%s." % (total, n, "" if n == 1 else "s")
+        left = target - total
+        if left > 0:
+            words += " %d to go." % left
+        elif left < 0:
+            words += " Over by %d." % -left
+        elif n >= 10:
+            words += " Done."
+        return words
 
     # -- items --------------------------------------------------------------------------
     GUNS = {3, 4, 5, 6, 7, 8, 9, 10, 11, 17, 19, 22, 23}
@@ -547,16 +718,22 @@ class App(RoomList, ModMenu):
                 self.poll_controller()
                 self.poll_offset()
                 self.poll_walk()
+                self.poll_ledge()
+                self.poll_push()
                 self.poll_taken()
                 self.poll_partner()
                 self.poll_modmenu()
                 self.poll_enemies()
                 self.poll_item_screen()
+                self.poll_examine()
                 self.poll_equip()
                 self.poll_files()
                 self.poll_choice()
+                self.poll_clock()
                 self.poll_hold()
                 self.poll_save()
+                self.poll_load_choice()
+                self.poll_brake()
             except NotReady:
                 pass
             except Exception:
