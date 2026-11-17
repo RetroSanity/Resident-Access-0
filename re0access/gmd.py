@@ -68,11 +68,24 @@ def _file_pages(game_dir, item, lang="eng"):
     pages = [t for p, pc, t in pages_of(no) if p >= 2]
     nxt = [t for p, pc, t in pages_of(no + 1) if p == 1]
     pages += nxt
+    from .text import icon_name
     clean = []
     for t in pages:
-        t = re.sub(r"<PAGE>", " ", t)
-        t = re.sub(r"<[^>]*>", "", t)
+        # (a centred line is a heading: end it, so it is not run into the words after it)
+        # (several centred lines together - "Court Order / for Transportation" - are one heading)
+        lines = re.split(r"\r?\n", t)
+        t = "\n".join(ln + "." if ln.startswith("<CNTR>") and ln.strip() and ln.rstrip()[-1:] not in ".!?:," and
+                       len(re.sub(r"<[^>]*>", "", ln)) < 45 and
+                       not (k + 1 < len(lines) and lines[k + 1].startswith("<CNTR>")) else ln
+                       for k, ln in enumerate(lines))
+        t = re.sub(r"<PAGE>|<BR>", " ", t)
+        t = t.replace("・", ", ").replace("…", "...")
+        # (the buttons it names, as on the controller: "Press X during play")
+        t = re.sub(r"<[^>]*>", lambda m: (" %s " % icon_name(m.group(0))) if icon_name(m.group(0)) else "", t)
         t = re.sub(r"\s+", " ", t).strip()
+        for a, b in ((" .", "."), (" ,", ","), ("\n", " "), (": ,", ":"), (":,", ":"), (" :", ":")):
+            t = t.replace(a, b)
+        t = re.sub(r"(?<!\.)\.\.(?!\.)", ".", t)
         if t and t not in ("Invalid Message", "ダミー"):
             clean.append(t)
     return clean
