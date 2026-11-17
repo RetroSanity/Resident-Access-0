@@ -50,6 +50,7 @@ FIXED = [
     (r"you can feel the heat", "Hot light"),
     (r"your view is blocked", "Thick trees"),
     (r"too dark to see", "Dark corner"),
+    (r"projector isn't displaying", "Projector screen"),
     (r"from here you've got a good view", "Window"),
     (r"inside the cardboard box", "Cardboard box"),
     (r"lines carved into the relief", "Relief carving"),
