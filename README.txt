@@ -4,7 +4,7 @@ played blind with an Xbox controller. It speaks through your screen reader
 (NVDA, JAWS, ZoomText, System Access and others), or Windows' own voice if no
 screen reader is running.
 
-This is an early build (0.4). It is built from Resident Access HD
+This is an early build (0.41). It is built from Resident Access HD
 (the mod for Resident Evil HD Remaster), and more is coming.
 
 Installing
@@ -51,6 +51,18 @@ What it reads by itself
   ("Player's Manual 1, 1 of 3"), and the whole file is read when you open
   it. A file you pick up is read page by page as you turn the pages.
 - The typewriter: its question, then each save slot as you move to it.
+- Load Game: Continue, Restart and Back after you pick a slot.
+- The train brakes' number pads: the number to make, the total so far, and
+  the number the cursor is on as you move (it wraps round), on both pads.
+- Examining an item (turning it round on the item screen): which side faces
+  you as you turn it ("Front cover", "Spine", "Page edges, at an angle" for
+  a book; front, back, left side, right side, top and bottom for others).
+- The clock: the time it shows when you are asked which hand to turn, and
+  the new time each time a hand moves ("8:15"). Its buttons (Left, Right,
+  Hour hand or Minute hand, OK) are said only as you move onto them.
+- Pictures that carry a clue are described after their words: the Microfilm
+  Image (and the projector showing both microfilms) says which number is on
+  which seat of the conference room.
 - Levers: "Holding" when you pull one and keep hold of it (the hookshot
   release), and "Let go" when the one holding it moves away.
 - The room's name as you go in (the train's cars by their names on the
@@ -66,6 +78,8 @@ way ("Door to Dining Car, 7 metres, to the right"). Things on another floor
 of the room say "upstairs" or "downstairs".
 - Doors say where they lead. Stairs and ladders are listed as stairs and
   ladders ("Ladder up to Service Room", "Stairs down to Dining Car").
+- Places to jump down, climb up or step up ("Jump down", "Climb up", "Step
+  up") are listed too; auto walk uses them by itself.
 - Items are named before you pick them up ("Handgun Ammo, 15"), and leave the
   list once taken. Key items (Briefcase, Train Key, Hookshot...) are listed
   too, and an item you take from something (the hookshot fixed to the wall)
@@ -74,8 +88,24 @@ of the room say "upstairs" or "downstairs".
   include the typewriter.
 - Puzzles: the things that ask you something when you check them -
   reconnect the cable? press the button? place an item here? - places
-  where an item is used (the window for the hookshot), and panels that open
-  a close-up (the brakes on the train).
+  where an item is used (the window for the hookshot, the microfilm
+  projector), panels that open a close-up (the brakes on the train), lifts
+  you stand a character on, and things you push:
+  - The table in the Assistant Director's Office and the bookcase in the
+    Small Library are listed with what to do next and how many pushes are
+    left ("push it along the bookshelves to the wall at the end, 7 more
+    pushes"). Auto walk takes you to the side to push from, facing the right
+    way, and says "Hold forward to push". As you push it counts down
+    ("6 more"), and says "Stop" (holding the controller back a moment) once
+    it is in place. If it goes the wrong way, leave the room and come back
+    to put it back where it started.
+  - The table is climbed over for you when it is in the way, and with it
+    under the moose head, auto walk to the Iron Needle (or the moose head)
+    climbs onto the table and faces it. Standing on the table, auto walk to
+    anything else gets you down first.
+  - The lecture room's lectern, and its sixteen seats ("Seat 2, front row,
+    right of the aisle"), numbered as on the Microfilm Image: auto walk
+    takes you behind the seat's desk, facing it.
 - The lists change as you go into each new room.
 - Enemies: what each one is, how far, and how much health it has left, in
   percent.
@@ -117,9 +147,15 @@ button (B) while it walks you and it runs (it still walks the last steps and
 the sharp bends). Touch the controller, or press the
 left stick in again, to stop it. If there is no way there it tells you (and when the thing is
 upstairs or downstairs from you).
+If the way goes over an edge or a step (the sewer's water channel, the Small
+Library's platform), auto walk takes you to the game's own spot for it,
+faces across and presses A for you, then walks on.
+Sometimes you may have to turn left or right a little, or step forward a
+little, before A works on something: an item, a door, stairs or a thing to
+check. If "Here. Press A" does nothing, turn a touch each way, or take a
+small step forward, and press A again.
 Some things to check only do something later in the story (Edward's body on
 the train, for one): pressing A there may do nothing yet.
-Not read yet: the numbers on the train brakes' number pads.
 
 The 3D beacon
 Walk there yourself, following a sound all round you. Use headphones.
