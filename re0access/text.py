@@ -13,11 +13,29 @@ PAD_ICONS = {
     "PAD_LEFT": "Left", "PAD_RIGHT": "Right",
 }
 
+# The game's own controls in its text ("Press <BTN Status> during play"), as the game draws them
+# for a controller (seen in its Player's Manuals)
+BTN_NAMES = {
+    "Status": "X", "Map": "LT", "Action": "A", "Attack": "A", "Aim": "RB", "Move": "the left stick",
+    "PartnerMove": "the right stick", "QuickTurn": "B", "Back": "back on the left stick",
+    "StatusChange": "Y", "Trace": "the View button", "AimUpper": "up", "AimLower": "down",
+}
+B_NAMES = {"B_DE": "A", "B_CA": "B"}
+
 _TAG = re.compile(r"<[^<>]*>")
 
 
 def icon_name(tag):
-    """'<ICON PAD_A>' -> 'A', keyboard pictures -> '' (the mod is played on a controller)."""
+    """'<ICON PAD_A>' -> 'A', '<BTN Status>' -> 'X', keyboard pictures -> '' (the mod is played
+    on a controller)."""
+    b = re.match(r"<BTN ([A-Za-z]+)>", tag)
+    if b:
+        return BTN_NAMES.get(b.group(1), "")
+    b = re.match(r"<(B_[A-Z]+)>", tag)
+    if b:
+        return B_NAMES.get(b.group(1), "")
+    if tag == "<ICON PLUS>":
+        return "plus"
     m = re.match(r"<ICO?N2? ([A-Z0-9_]+)>", tag)
     if not m:
         return None
@@ -42,6 +60,7 @@ def clean(raw):
         return " " if t.upper().startswith("<PAGE") else ""
     s = _TAG.sub(tag, s)
     s = re.sub(r"#\s*(\d)", r"number \1", s)          # ("open valve #1": not "hash")
+    s = s.replace("HourHand", "Hour hand").replace("MinuteHand", "Minute hand")   # (the clock's choices)
     s = " ".join(s.split())
     for a, b in ((" .", "."), (" ,", ","), (".,", "."), ("?,", "?"), ("!,", "!"), (" ?", "?"), (" !", "!"), (", ,", ","), ("( ", "("), (" )", ")")):
         s = s.replace(a, b)
