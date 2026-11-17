@@ -15,6 +15,7 @@ CLEARANCE = 330.0   # how far from a wall the player's middle has to stay
 COMFORT = 650.0     # nearer a wall than this is allowed, but the way prefers not to be
 NEAR_COST = 2.5     # how much longer a step near a wall counts
 STEP = 320.0        # how much the ground may rise between neighbouring squares (steep stairs too)
+RISER = 260.0       # a wall no taller than this is a stair step's front (stepped up, not walked round)
 BODY = (250.0, 1000.0)   # the part of the body walls are checked against, above the ground
 
 
@@ -109,6 +110,9 @@ class NavMesh:
                     best = (d, pts[i], pts[j])
         (x1, z1), (x2, z2) = best[1], best[2]
         self.walls.append((x1, z1, x2, z2, low, high))
+        if high - low <= RISER:
+            return      # (the front of a stair step: stepped over, not a wall to keep off - the
+                        # Large Hall's steep stairs down to the Main Hall door had no way down)
         self.block_segment(x1, z1, x2, z2, self.clearance, low, high)
         self.block_segment(x1, z1, x2, z2, COMFORT, low, high, into=self.near)
 
@@ -173,6 +177,59 @@ class NavMesh:
                                 self._regions[nxt] = label
                                 todo.append(nxt)
         return label
+
+    def region_size(self, label):
+        return sum(1 for v in self._regions.values() if v == label) if hasattr(self, "_regions") else 0
+
+    def main_floor_near(self, x, z, radius=1200.0, near_y=None):
+        """(height, size) of the ground near (x, z) that belongs to the biggest part of the room
+        you can walk round (not a pocket shut in by walls), and the size of the biggest part with
+        ground about at near_y there; None if no ground."""
+        c0, r0 = self.cell(x, z)
+        n = int(radius // CELL) + 1
+        best = None
+        own = 0
+        sizes = {}
+        for dc in range(-n, n + 1):
+            for dr in range(-n, n + 1):
+                cx, cz = self.centre(c0 + dc, r0 + dr)
+                if (cx - x) ** 2 + (cz - z) ** 2 > radius * radius:
+                    continue
+                for i, h in enumerate(self.heights.get((c0 + dc, r0 + dr), ())):
+                    if (c0 + dc, r0 + dr, i) in self.blocked:
+                        continue
+                    label = self.region(cx, h, cz)
+                    if label is None:
+                        continue
+                    if label not in sizes:
+                        sizes[label] = self.region_size(label)
+                    if near_y is not None and abs(h - near_y) <= 300.0:
+                        own = max(own, sizes[label])
+                    key = (sizes[label], -((cx - x) ** 2 + (cz - z) ** 2))
+                    if best is None or key > best[0]:
+                        best = (key, h)
+        if best is None:
+            return None
+        return best[1], best[0][0], own
+
+    def joined_near(self, start, goal, radius=1500.0, reach=500.0):
+        """True if somewhere within radius of goal (x, y, z), about at its height, is in the same
+        part of the room as start: a door whose middle is in the wall still counts as got to."""
+        label = self.region(*start)
+        if label is None:
+            return True
+        gx, gy, gz = goal
+        c0, r0 = self.cell(gx, gz)
+        n = int(radius // CELL) + 1
+        for dc in range(-n, n + 1):
+            for dr in range(-n, n + 1):
+                cx, cz = self.centre(c0 + dc, r0 + dr)
+                if (cx - gx) ** 2 + (cz - gz) ** 2 > radius * radius:
+                    continue
+                for i, h in enumerate(self.heights.get((c0 + dc, r0 + dr), ())):
+                    if abs(h - gy) <= reach and self._regions.get((c0 + dc, r0 + dr, i)) == label:
+                        return True
+        return False
 
     def free_at(self, x, y, z, reach=300.0):
         """True if someone can stand at (x, z) on ground about at height y."""
@@ -287,7 +344,79 @@ class NavMesh:
             cur = nxt
         return cur == b
 
-    def route(self, start, goal, extra=(), danger=()):
+    LEDGE = (400.0, 1300.0)     # a drop (or climb) of this much over an edge: jump down / climb up
+    LEDGE_COST = 25.0           # (in squares: only taken when there is no way round)
+
+    def ledge_links(self):
+        """{node: [(node across, "down" or "up")]}: edges of raised walkways the player can jump
+        down from (into the water of a sewer) or climb up onto, a few squares across."""
+        if getattr(self, "_ledges", None) is not None:
+            return self._ledges
+        links = {}
+        lo, hi = self.LEDGE
+        for (c, r), hs in self.heights.items():
+            for i, h in enumerate(hs):
+                node = (c, r, i)
+                if node in self.blocked:
+                    continue
+                for dc, dr in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    if self._steps(node, dc, dr, self.blocked):
+                        continue                    # (the ground goes on that way)
+                    for k in range(1, 6):
+                        cc, rr = c + dc * k, r + dr * k
+                        hs2 = self.heights.get((cc, rr))
+                        if not hs2:
+                            break
+                        if any(abs(h2 - h) <= STEP and (cc, rr, j) not in self.blocked for j, h2 in enumerate(hs2)):
+                            break
+                        hit = [(cc, rr, j) for j, h2 in enumerate(hs2)
+                               if lo <= abs(h2 - h) <= hi and (cc, rr, j) not in self.blocked]
+                        if hit:
+                            j = min(hit, key=lambda n: abs(abs(self.heights[n[:2]][n[2]] - h) - 700.0))
+                            kind = "down" if self.heights[j[:2]][j[2]] < h else "up"
+                            links.setdefault(node, []).append((j, kind))
+                            break
+        self._ledges = links
+        return links
+
+    def set_spots(self, spots):
+        """The game's own places to jump down and climb up: [(kind, (x, y, z) of the zone)]. With
+        any, only they join the levels (an edge elsewhere cannot be got over, however low). Every
+        free square about at the zone's height within reach of it is joined to the nearest square
+        of the other level that is open (not under the floor jumped from)."""
+        links = {}
+        for kind, (x, y, z) in spots:
+            c0, r0 = self.cell(x, z)
+            here = []
+            for dc in range(-8, 9):
+                for dr in range(-8, 9):
+                    for i, h in enumerate(self.heights.get((c0 + dc, r0 + dr), ())):
+                        if abs(h - y) <= 350.0 and (c0 + dc, r0 + dr, i) not in self.blocked:
+                            here.append((c0 + dc, r0 + dr, i))
+            if not here:
+                continue
+            h = sum(self.heights[n[:2]][n[2]] for n in here) / len(here)
+            best = None
+            for dc in range(-20, 21):
+                for dr in range(-20, 21):
+                    hs = self.heights.get((c0 + dc, r0 + dr), ())
+                    if kind == "down" and any(abs(hh - h) <= 350.0 for hh in hs):
+                        continue                # (under the floor you jump from: not where you land)
+                    for i, h2 in enumerate(hs):
+                        node = (c0 + dc, r0 + dr, i)
+                        if node in self.blocked:
+                            continue
+                        if (kind == "down" and h2 < h - 400.0) or (kind == "up" and h2 > h + 400.0):
+                            score = dc * dc + dr * dr + abs(h2 - h) / 2000.0
+                            if best is None or score < best[0]:
+                                best = (score, node)
+            if best:
+                for n in here:
+                    links.setdefault(n, []).append((best[1], kind))
+        self.spot_jumps = links
+        return links
+
+    def route(self, start, goal, extra=(), danger=(), ledges=False):
         """Waypoints [(x, z)] from start (x, y, z) to goal (x, y, z), or None
         if there is no way. `extra` are circles (x, y, z, radius) to keep
         clear of (enemies). `danger` are circles (x, z, radius, weight) that may be crossed but
@@ -327,14 +456,21 @@ class NavMesh:
         g = self.node_at(goal[0], goal[1], goal[2], blocked, limit=10, reach=700.0) or \
             self.node_at(goal[0], goal[1], goal[2], blocked, limit=22, reach=700.0) or \
             self.node_at(goal[0], goal[1], goal[2], blocked, limit=10, reach=1e9)
+        self.last_start_dy = None
+        self.last_end_dy = None
         if s is None or g is None:
             return None
+        # (how far from the floor asked for the way starts: a map without the balcony you stand
+        # on puts you on the ground under it - a way from there is no way from here)
+        self.last_start_dy = abs(self.heights[s[:2]][s[2]] - start[1])
         dist = {s: 0.0}
         came = {}
         heap = [(0.0, s)]
         steps = [(1, 0, 1.0), (-1, 0, 1.0), (0, 1, 1.0), (0, -1, 1.0),
                  (1, 1, 1.4142), (1, -1, 1.4142), (-1, 1, 1.4142), (-1, -1, 1.4142)]
         found = False
+        self.last_ledge = None
+        jumps = (getattr(self, "spot_jumps", None) or self.ledge_links()) if ledges else {}
         closest = (math.hypot(g[0] - s[0], g[1] - s[1]), s)
         visited = 0
         while heap:
@@ -364,17 +500,39 @@ class NavMesh:
                         dist[nxt] = nd
                         came[nxt] = cur
                         heapq.heappush(heap, (nd + math.hypot(g[0] - nxt[0], g[1] - nxt[1]), nxt))
+            for nxt, _kind in jumps.get(cur, ()):
+                if nxt in blocked:
+                    continue
+                nd = base + self.LEDGE_COST
+                if nd < dist.get(nxt, 1e18):
+                    dist[nxt] = nd
+                    came[nxt] = cur
+                    heapq.heappush(heap, (nd + math.hypot(g[0] - nxt[0], g[1] - nxt[1]), nxt))
         if not found:
             # Cannot get all the way: get as near as we can, if that is near.
             if closest[1] == s:
+                self.last_end_dy = abs(self.heights[s[:2]][s[2]] - goal[1])
                 return [] if closest[0] * CELL <= 1500 else None    # already as near as can be
             if closest[0] * CELL > 3000:
                 return None
             g = closest[1]
+        self.last_end_dy = abs(self.heights[g[:2]][g[2]] - goal[1])
         path = [g]
         while path[-1] != s:
             path.append(came[path[-1]])
         path.reverse()
+        if jumps:
+            # (the way only as far as the first edge to jump down or climb up: there the player
+            # presses A, and the walk goes on from where that leaves them)
+            for k in range(len(path) - 1):
+                a, b = path[k], path[k + 1]
+                if abs(self.heights[a[:2]][a[2]] - self.heights[b[:2]][b[2]]) > STEP:
+                    kind = "down" if self.heights[b[:2]][b[2]] < self.heights[a[:2]][a[2]] else "up"
+                    self.last_ledge = (kind, self.centre(a[0], a[1]), self.centre(b[0], b[1]))
+                    path = path[:k + 1]
+                    break
+            if len(path) == 1:
+                return []
         # Keep only the corners: go straight wherever nothing is in the way,
         # and do not let a short cut run along a wall the way had kept off.
         wide = blocked | near
