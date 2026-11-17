@@ -9,6 +9,7 @@ Places are room-local, in centimetres (x, y, z), like the player's position
 less the room's offset."""
 import os
 import re
+import math
 import struct
 
 from . import sbc, gmd, names
@@ -252,21 +253,79 @@ class RoomData:
                                                  outline=_footprint(zones[index]), puzzle=True))
                         used.add(index)
                         continue
+                    j = -1
+                    if not words and kind == 0x02:
+                        j = next((i for i in range(len(body) - 10)
+                                  if body[i:i + 4] in (b"\x00\x9a\x00\x02", b"\x00\x99\x00\x02")), -1)
+                    if j >= 0:
+                        # (a spot to jump down from or climb up onto a raised walkway: op 9a, then
+                        # 1 for up, 2 for down - the sewer's water channel. Op 99 is a step up onto
+                        # a platform - the Small Library's - 2 for up, 1 for down, and its zone's
+                        # height is the level it takes you to: fix_step_heights puts it right)
+                        v = struct.unpack_from(">H", body, j + 8)[0]
+                        if body[j + 1] == 0x9a:
+                            way = "up" if v == 1 else "down"
+                            name = "Climb up" if way == "up" else "Jump down"
+                        else:
+                            way = "up" if v == 2 else "down"
+                            name = "Step up" if way == "up" else "Step down"
+                        self.things.append(Thing("ledge", name, centre, (lo, hi), zone=index, says=[], way=way,
+                                                 outline=_footprint(zones[index]), step=body[j + 1] == 0x99))
+                        used.add(index)
+                        continue
                     if not words:
                         continue        # (no message: a story event starts there, not a thing to check)
                     name = names.best_name(words) or "Something to check"
                     low = " ".join(words).lower()
                     if "service lift" in low or "dumbwaiter" in low:
                         name = "Service lift"
+                    elif "mounted stuffed animal" in low:
+                        name = "Moose head"     # (high on the wall: "too dark to see" till the lights are on)
                     # (one that asks you something - reconnect the cable? press the button? - is
                     # a puzzle or a machine to work, not just something to look at)
-                    puzzle = any("<SEL" in texts[m] for m in msgs) or index in use_zones
+                    puzzle = any("<SEL" in texts[m] for m in msgs) or index in use_zones or \
+                        "if you had" in low     # ("If you had some microfilm, you could view it": an item goes here)
                     # a box as wide as the room (a whole-room message) is not a place to walk to
-                    if len(parts) > 1 or (hi[0] - lo[0]) * (hi[2] - lo[2]) > 600 * 600:
-                        continue
+                    area = (hi[0] - lo[0]) * (hi[2] - lo[2])
+                    if area > 600 * 600 or (len(parts) > 1 and area > 150 * 150):
+                        continue        # (a small zone in two parts - the lecture room's lectern - is one thing)
+                    if "system disk" in low:
+                        name = "Lectern"    # (the lecture room's: "Evac. Drill Path: Locked")
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
                                              outline=_footprint(zones[index]), puzzle=puzzle))
                     used.add(index)
+        # Places the game has no zone of their own for (all in one big zone, the script working out
+        # which from where you stand): the lecture room's sixteen seats with switches on their
+        # desks, numbered 0 to F as on the Microfilm Image (front row, nearest the screen: 0 1 2 3)
+        if self.base_code == "sh0b":
+            rows = ("front row", "second row", "third row", "back row")
+            cols = ("far left", "left of the aisle", "right of the aisle", "far right")
+            for r, z in enumerate((530.0, 680.0, 830.0, 980.0)):
+                for c, x in enumerate((490.0, 630.0, 970.0, 1110.0)):
+                    n = "0123456789ABCDEF"[r * 4 + c]
+                    self.things.append(Thing("check", "Seat %s, %s, %s" % (n, rows[r], cols[c]), (x, -100.0, z),
+                                             ((x - 12, -110.0, z - 12), (x + 12, -90.0, z + 12)),
+                                             stand=True, face=math.pi, puzzle=True, seat=n,
+                                             outline=[(x - 12, z - 12), (x + 12, z - 12), (x + 12, z + 12), (x - 12, z + 12)]))
+        # A lift you stand a character on (the Main Library's): a zone with only an enter and a
+        # leave event (kinds 4 and 5, no door), in a room whose words talk of a lift
+        if script:
+            kinds = {}
+            for kind, off, index in script.entries:
+                kinds.setdefault(index, set()).add(kind)
+            lifty = any("lift" in " ".join(getattr(th, "says", None) or []).lower() and
+                        "service lift" not in " ".join(getattr(th, "says", None) or []).lower()
+                        for th in self.things if th.kind == "check")
+            for index, ks in kinds.items():
+                if not lifty or index in used or index not in zones or not {0x04, 0x05} <= ks:
+                    continue
+                if any(kind == 0x04 and script.doors(off) for kind, off, i in script.entries if i == index):
+                    continue
+                lo, hi = _box(zones[index])
+                centre = ((lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2)
+                self.things.append(Thing("check", "Lift", centre, (lo, hi), zone=index, says=[], puzzle=True,
+                                         stand=True, outline=_footprint(zones[index])))
+                used.add(index)
         self.items = load_items(game_dir, scene_no, table)
         for it in self.items:
             self.things.append(it)
