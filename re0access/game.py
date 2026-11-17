@@ -5,6 +5,7 @@ found in the running game. Each MT object starts with its class's vtable, which 
 player and other objects are recognised.
 """
 import ctypes
+import logging
 import math
 import struct
 import time
@@ -69,9 +70,15 @@ VT_FILE = 0x00CDA970          # uGUIFile, a file read as you pick it up ([sSubMe
 VT_INGAME_MSG = 0x00CDE2E8     # uGUIInGameMessage, the message window: +0x284 4 while a question's answers
                               # are up, +0x2A0 the answer picked (0 Yes, 1 No, 2 Use)
 VT_DIALOG = 0x00CDA380        # uGUIDialog, the Start menu's "Quit?" question: +0x268 0 Yes, 1 No
+VT_BRAKE = 0x00CD9698         # uGUIBrakePuzzle, the number pad behind the brake's card reader (up while it is)
+VT_MULTINUM = 0x00CE3820      # cGUIObjMultiNumTexture, a number drawn on screen: +0x114 its value; the
+                              # pad's target and total are the two with 3 at +0x50
+BRAKE_TARGETS = (36, 42, 53, 67, 81)   # (targets seen; it differs each game, so only a hint)
 VT_PAUSE = 0x00CDFE68         # uGUIPause, the Start menu in play: +0x260 3 while open (4 with its
                               # "Quit?" question up, 0 shut), +0x268 the row (0 Back, 1 Quit Game)
 SUBMENU_OPEN = 0x294
+VT_SUBITEM = 0x00CC7E58       # uSubItem: the item turned round when examined
+CLOCK_VALUES = 0x00DCBEBC     # -> the room's script values (the clock's hands while setting them)
 THINK = 0x67B8                # in a character: its "think" (cPlayerThink while you control it)
 VT_THINK = 0x00CCBBE8         # cPlayerThink
 HEALTH = 0x1030              # in a character: health (32-bit); full is 150
@@ -89,7 +96,7 @@ ENEMY_VTS = {0xCBDCD8: 0x10, 0xCC4F28: 0x11, 0xCC50A0: 0x12, 0xCC5218: 0x14, 0xC
              0xCC3248: 0x46, 0xCC3710: 0x47, 0xCC5DD8: 0x50, 0xCC5F50: 0x51, 0xCC60C8: 0x5A, 0xCC6240: 0x5B,
              0xCC63B8: 0x6A, 0xCC6530: 0x6B}
 ZOMBIES = {0x10, 0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x50, 0x51, 0x5A, 0x5B, 0x6A, 0x6B}
-ENEMY_NAMES = {0x2A: "Cerberus", 0x31: "Stinger", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
+ENEMY_NAMES = {0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
 
 
 def enemy_name(kind):
@@ -121,14 +128,25 @@ ROOM_NAMES = {
     "tr18": "Upstairs Passenger Car", "tr1a": "Rear Carriage", "tr1b": "Officer's Car", "tr1c": "Cabin 201",
     "tr1d": "Cabin 202", "tr1e": "Passenger Car 2", "tr1f": "Passenger Car 1", "tr20": "Upstairs Passenger Car",
     "tr21": "Restaurant Car", "tr22": "Dining Car",
-    # The Training Facility (the rooms its things and doors make certain; sh0a and up are the
-    # same rooms later in the story)
+    # The Training Facility (names from the game's maps, matched by which rooms each room's doors
+    # lead to and what is in it; sh20 and up are the same rooms later in the story)
     "sh00": "Main Hall", "sh01": "Dining Room", "sh02": "Kitchen", "sh03": "Projection Room",
-    "sh04": "West Wing Corridor", "sh05": "Bathroom", "sh06": "Boiler Room", "sh08": "Storage Room",
-    "sh0b": "Art Room", "sh0c": "Art Corridor", "sh0e": "Main Library", "sh0f": "Assistant Director's Office",
-    "sh1f": "Sewer Passage", "sh0a": "Main Hall", "sh29": "Main Hall", "sh22": "Art Room", "sh23": "Art Room",
-    "sh24": "Art Room", "sh25": "Assistant Director's Office", "sh2e": "Main Library", "sh30": "Main Library",
+    "sh04": "West Wing Corridor", "sh05": "Bathroom", "sh06": "Boiler Room", "sh07": "Observatory Tower",
+    "sh08": "Storage Room", "sh09": "Training Facility Entrance", "sh0a": "Main Hall", "sh0b": "Lecture Room",
+    "sh0c": "Art Corridor", "sh0d": "Medicine Room", "sh0e": "Main Library", "sh0f": "Assistant Director's Office",
+    "sh10": "Small Library", "sh11": "Private Corridor", "sh12": "Marcus' Office", "sh13": "Living Room",
+    "sh14": "Private Study Room", "sh15": "Art Room", "sh16": "Narrow Corridor A", "sh17": "Narrow Corridor B",
+    "sh18": "Old Laboratory", "sh19": "Maintenance Room", "sh1a": "Piano Bar", "sh1b": "Broadcast Room",
+    "sh1c": "Outside Balcony", "sh1d": "Large Hall", "sh1e": "Train Passage", "sh1f": "Sewer Passage",
+    "sh20": "Observatory Tower", "sh22": "Lecture Room", "sh23": "Lecture Room", "sh24": "Lecture Room",
+    "sh25": "Assistant Director's Office", "sh26": "Living Room", "sh27": "Outside Balcony", "sh28": "Train Passage",
+    "sh29": "Main Hall", "sh2a": "Large Hall", "sh2e": "Main Library", "sh2f": "Large Hall", "sh30": "Main Library",
     "sh31": "Main Library",
+    # The Facility Basement
+    "dm00": "Basement Entrance", "dm01": "Monitor Room", "dm02": "Torture Room B", "dm03": "Observation Room",
+    "dm04": "Statue Room", "dm05": "Storage Room", "dm06": "Bunk Room B", "dm07": "Bunk Room A",
+    "dm08": "Waterfall Room", "dm09": "Cavernous Area", "dm0a": "Training Room", "dm0b": "Torture Room A",
+    "dm0c": "Torture Room B",
 }
 
 
@@ -341,21 +359,46 @@ class Game:
 
     _msg = None
 
-    def message_choice(self):
+    def message_choice(self, expect=False):
         """The cursor (0, 1, 2: Yes, No, Use) on a question in the message window, or None when no
-        question is up."""
+        question is up. (There can be more than one message window: the clock's hour hand
+        question comes up in another one than its minute hand question - all are kept.)"""
         try:
-            m = self._msg
-            if not m or self.mem.u32(m) != VT_INGAME_MSG:
-                m = self._msg = self.find_cached(VT_INGAME_MSG, "_msg_tried")
-                if not m:
-                    return None
-            if self.mem.u32(m + 0x284) != 4:
+            msgs = [m for m in (self._msgs or []) if self.mem.u32(m) == VT_INGAME_MSG]
+            self._msgs = msgs
+            for m in msgs:
+                if self.mem.u32(m + 0x284) == 4:
+                    cur = self.mem.u32(m + 0x2A0)
+                    return cur if 0 <= cur < 4 else None
+            # (none asking: look again for them all - often while a question has just been asked
+            # (expect), else only when none is known - in the background)
+            if msgs and not expect:
                 return None
-            cur = self.mem.u32(m + 0x2A0)
+            found = self.run_cached(lambda: self.find_objects(VT_INGAME_MSG), "_msgs_tried",
+                                    1.0 if expect else 30.0)
+            if found:
+                self._msgs = found
         except NotReady:
             return None
-        return cur if 0 <= cur < 4 else None
+        return None
+
+    _msgs = None
+
+    def find_objects(self, vt, max_region=0x10000000, limit=16):
+        """All the objects of a class (by its vtable) in the game's memory (slow)."""
+        pat = struct.pack("<I", vt)
+        out = []
+        for base, size in regions(self.mem, max_region):  # noqa
+            try:
+                data = self.mem.read(base, size)
+            except NotReady:
+                continue
+            i = data.find(pat)
+            while i >= 0 and len(out) < limit:
+                if i % 4 == 0:
+                    out.append(base + i)
+                i = data.find(pat, i + 4)
+        return out
 
     def files_screen(self):
         """(mode, cursor) on the item screen's Files page (mode 3 the list, 6 reading one), or None."""
@@ -365,7 +408,18 @@ class Game:
                 return None
             if self.mem.u32(sub + SUBMENU_OPEN) not in (2, 3) or self.mem.u32(sub + 0x290) != 4:
                 return None
-            return self.mem.u32(sub + 0x2A0), self.mem.u32(sub + 0x39C)
+            return self.mem.u32(sub + 0x2A0), self.mem.u32(sub + 0x39C)    # (mode 3 the tabs, 6 a tab's
+        except NotReady:                                                   # list, 10 reading a file)
+            return None
+
+    def files_index(self):
+        """The file the cursor is on in the Files page's list (from 0, down the first column then
+        the second), or None."""
+        try:
+            sub = self.mem.u32(self.mem.ptr(SUBMENU_HOLDER) + 0x60)
+            if not sub or self.mem.u32(sub) != VT_SUBMENU:
+                return None
+            return self.mem.u32(sub + 0x3AC)
         except NotReady:
             return None
 
@@ -427,6 +481,35 @@ class Game:
         except NotReady:
             return None
         return None
+
+    def examined_axes(self):
+        """While an item is being examined (turned round in the item screen): the z part (towards
+        you) of each of its own axes x, y, z, or None. (uGUISubMenu +0x278 -> uSubItem, the item
+        shown, its axes at +0x70; the stick turns it about the screen's up and across axes.)"""
+        try:
+            sub = self.mem.u32(self.mem.ptr(SUBMENU_HOLDER) + 0x60)
+            if not sub or self.mem.u32(sub) != VT_SUBMENU or self.mem.u32(sub + SUBMENU_OPEN) != 6:
+                return None
+            obj = self.mem.u32(sub + 0x278)
+            if not obj or self.mem.u32(obj) != VT_SUBITEM:
+                return None
+            m = struct.unpack("<12f", self.mem.read(obj + 0x70, 48))
+            return (m[2], m[6], m[10])
+        except NotReady:
+            return None
+
+    def clock_hands(self):
+        """(hour 0-11, minute step 0-11 - fives) the clock's hands are set to, while setting them
+        (the Main Library's clock: the room's script values at [0xDCBEBC], +0x4C the minute hand,
+        +0x4E the hour hand - the same place holds other things in other rooms)."""
+        try:
+            base = self.mem.u32(CLOCK_VALUES)
+            if not base:
+                return None
+            m, h = struct.unpack("<HH", self.mem.read(base + 0x4C, 4))
+        except NotReady:
+            return None
+        return h % 12, m % 12
 
     def item_cursor(self):
         """The slot the cursor is on in the item screen (0-5), or None when it is not open."""
@@ -589,6 +672,93 @@ class Game:
         except NotReady:
             return None
         return row if 0 <= row < 100 else None
+
+    _brake = None
+    _brake_nums = None
+
+    def brake_pad(self, look=False):
+        """(target, total) on the brake's number pad while it is up, or None. look: search for the
+        pad (slow, in the background) when it is not known."""
+        try:
+            bp = self._brake
+            if not bp or self.mem.u32(bp) != VT_BRAKE:
+                self._brake = self._brake_nums = None
+                if not look:
+                    return None
+                bp = self._brake = self.find_cached(VT_BRAKE, "_brake_tried", 2.0)
+                if not bp:
+                    return None
+            nums = self._brake_nums
+            if not nums or any(self.mem.u32(n) != VT_MULTINUM for n in nums):
+                self._brake_nums = None
+                nums = self._brake_nums = self.run_cached(self.find_brake_numbers, "_bnum_tried", 1.0)
+                if not nums:
+                    return None
+            return self.mem.u32(nums[0] + 0x114), self.mem.u32(nums[1] + 0x114)
+        except NotReady:
+            return None
+
+    def find_brake_numbers(self):
+        """(the target's number object, the total's), from all the numbers drawn on screen."""
+        pat = struct.pack("<I", VT_MULTINUM)
+        found = []
+        for base, size in regions(self.mem, 0x10000000):  # noqa
+            try:
+                data = self.mem.read(base, size)
+            except NotReady:
+                continue
+            i = data.find(pat)
+            while i >= 0:
+                a = base + i
+                if i % 4 == 0:
+                    try:
+                        if self.mem.u32(a + 0x50) == 3:
+                            found.append((a, self.mem.u32(a + 0x114)))
+                    except NotReady:
+                        pass
+                i = data.find(pat, i + 4)
+        if len(found) != 2:
+            logging.info("brake pad numbers: %s", found)
+            return None
+        (a, va), (b, vb) = found
+        if va == 0 and vb == 0:
+            return None                             # (the pad still opening: its target not drawn yet)
+        if (va == 0) != (vb == 0):                  # (nothing put in yet: the total is 0)
+            return (b, a) if va == 0 else (a, b)
+        if (va in BRAKE_TARGETS) != (vb in BRAKE_TARGETS):
+            return (a, b) if va in BRAKE_TARGETS else (b, a)
+        return (a, b) if va >= vb else (b, a)
+
+    def run_cached(self, fn, stamp, every=30.0):
+        """fn() in the background (like find_cached): None until it has a result."""
+        found = getattr(self, stamp + "_found", None)
+        if found:
+            setattr(self, stamp + "_found", None)
+            return found
+        now = time.monotonic()
+        if getattr(self, stamp + "_busy", False) or now - getattr(self, stamp, -999.0) < every:
+            return None
+        setattr(self, stamp, now)
+        setattr(self, stamp + "_busy", True)
+
+        def run():
+            try:
+                setattr(self, stamp + "_found", fn())
+            except Exception:
+                logging.exception("background search")
+            setattr(self, stamp + "_busy", False)
+        import threading
+        threading.Thread(target=run, daemon=True).start()
+
+    def save_choice(self):
+        """The cursor on Continue / Restart / Back after picking a slot to load (from 0), or None."""
+        if self.save_row() is None:
+            return None
+        try:
+            v = self.mem.u32(self._save + 0x3DC)
+        except NotReady:
+            return None
+        return v if 0 <= v < 3 else None
 
     def inventory(self, who="Rebecca"):
         """[(item number, amount)] for the six slots (0 where empty)."""
