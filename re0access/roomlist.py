@@ -19,6 +19,7 @@ from .mem import NotReady
 from .nav import NavMesh
 from . import sbc
 from .walker import Walker, angle_diff
+from .push import PushMixin
 
 MM = 10.0           # the walker and the way finder count millimetres; the game centimetres
 
@@ -38,7 +39,7 @@ def metres(cm):
     return "%d metres" % round(m)
 
 
-class RoomList:
+class RoomList(PushMixin):
     """Mixed into the App: needs self.game, self.link, self.say, self.scene."""
 
     def init_list(self):
@@ -135,10 +136,14 @@ class RoomList:
                 tris = sbc.triangles(sbc.unpack(d, ents[key]))
                 self._tris_e = [tuple(tuple(c * MM for c in p) for p in t) for t in tris]
                 self.mesh = self.mesh_main = NavMesh(self._tris_e)
+                self.apply_spots(self.mesh_main)
+                self.fix_door_heights()
                 key_a = "scene\\scr\\%sa" % name
                 if key_a in ents:
                     self._tris_a = [tuple(tuple(c * MM for c in p) for p in t)
                                     for t in sbc.triangles(sbc.unpack(d, ents[key_a]))]
+                if self.fix_step_heights():
+                    self.apply_spots(self.mesh_main)
         except Exception:
             logging.exception("walk map %s", name)
         return self.room_data
@@ -221,10 +226,23 @@ class RoomList:
                     if kind == "item" and self.is_taken(t):
                         continue
                     out.append(t)
+                if kind == "puzzle":
+                    pt = self.push_thing()
+                    if pt is not None:
+                        out.append(pt)
         if kind == "item":
             # (an item got by checking the thing it is on - the hookshot fixed to the wall - is
             # listed here, at that thing)
             out = [self.item_in_check(t) or t for t in out]
+            # (the same item twice at one place - the Living Room's Crank Handle has a record for
+            # each difficulty - is one item)
+            seen, uniq = set(), []
+            for t in out:
+                key = (t.name, round(t.pos[0] / 25.0), round(t.pos[2] / 25.0))
+                if key not in seen:
+                    seen.add(key)
+                    uniq.append(t)
+            out = uniq
         elif kind == "check":
             items = self.live_items()
             if items is None:
@@ -400,6 +418,8 @@ class RoomList:
             name = "%s, %d percent" % (name, max(1, round(100.0 * t.hp / top)))
         if t.kind == "partner" and getattr(t, "hp", None) is not None:
             name = "%s, health %d percent" % (name, t.hp)
+        if getattr(t, "push", False):
+            name = "%s, %s" % (name, self.push_words(t))
         if not p:
             return name
         if getattr(t, "away", False):
@@ -427,7 +447,8 @@ class RoomList:
         idx = -1
         if cur is not None:
             for i, t in enumerate(things):
-                if t.name == cur[0] and math.hypot(t.pos[0] - cur[1], t.pos[2] - cur[2]) < 5:
+                if t.name == cur[0] and (math.hypot(t.pos[0] - cur[1], t.pos[2] - cur[2]) < 5 or
+                                         getattr(t, "push", False)):
                     idx = i
                     break
         idx = (idx + delta) % len(things) if idx >= 0 else (0 if delta > 0 else len(things) - 1)
@@ -449,6 +470,11 @@ class RoomList:
             return None
         if t.kind == "partner":
             pos = self.game.local_pos(t.obj)
+            if not pos:
+                return None
+            t.pos = pos
+        if getattr(t, "push", False):
+            pos = self.push_obj_pos()
             if not pos:
                 return None
             t.pos = pos
@@ -509,6 +535,50 @@ class RoomList:
             # laid out again; say it here)
             self.say(self.whose_items(self.with_equip(self.with_amount(name), name)), interrupt=True)
 
+    # (the sides of an examined item, by its own axis towards you: -z is the side shown first.
+    # For a book - from turning the Book of Good round - -z is the front cover, +x the spine,
+    # -x the page edges, +y the top)
+    SIDES = {"-z": "front", "+z": "back", "+x": "left side", "-x": "right side", "+y": "top", "-y": "bottom"}
+    BOOK_SIDES = {"-z": "front cover", "+z": "back cover", "+x": "spine", "-x": "page edges",
+                  "+y": "top edge", "-y": "bottom edge"}
+
+    def poll_examine(self):
+        """Turning an item round when examining it: say which side faces you as it changes."""
+        ax = self.game.examined_axes()
+        if ax is None:
+            self.exam_side = None
+            return
+        i = max(range(3), key=lambda k: abs(ax[k]))
+        key = ("+" if ax[i] > 0 else "-") + "xyz"[i]
+        st = getattr(self, "exam_side", None)
+        now = time.monotonic()
+        if st is None:
+            self.exam_side = {"said": key, "key": key, "since": now, "ax": ax}
+            return
+        if key != st["key"]:
+            st["key"] = key
+            st["since"] = now
+        if st["key"] != st["said"] and now - st["since"] > 0.3:
+            st["said"] = st["key"]
+            sides = self.SIDES
+            v = self.game.item_view()
+            try:
+                c = self.game.controlled()
+                inv = self.game.inventory(c[0]) if v and c else []
+                names = self.item_names() if hasattr(self, "item_names") else []
+                item = inv[v[1]][0] if v and v[1] < len(inv) else 0
+                name = names[item] if 0 < item < len(names) else ""
+            except Exception:
+                name = ""
+            if "book" in name.lower():
+                sides = self.BOOK_SIDES
+            # (how square on it is: "partly" when another side shows nearly as much)
+            rest = sorted((abs(a) for k2, a in enumerate(ax) if k2 != i), reverse=True)
+            words = sides[st["key"]].capitalize()
+            if rest and rest[0] > 0.6:
+                words += ", at an angle"
+            self.say(words, interrupt=True)
+
     def poll_pass_number(self, v):
         """How many to pass over (pictures on screen): "0 of 15", then each change."""
         _k, n, own_slot, partner_slot = v
@@ -533,35 +603,70 @@ class RoomList:
         else:
             self.say(words, interrupt=True)
 
-    def poll_files(self):
-        """The Files page of the item screen is pictures: say the file the cursor is on, and read
-        it out when it is opened."""
-        fs = self.game.files_screen()
-        was = getattr(self, "files_was", None)
-        self.files_was = fs
-        if fs is None and not getattr(self, "_files_primed", False) and self.scene is not None:
-            self._files_primed = self.game.files_owned() is not None   # (found ahead of time)
-        if fs is None or fs == was:
-            return
-        mode, cur = fs
-        owned = self.game.files_owned() or []
-        item = owned[cur] if 0 <= cur < len(owned) else None
+    # The Files page: three tabs (left and right), each a list of files in two columns (the
+    # cursor counts down the first column, then the second), then a file read a page at a time
+    FILE_TABS = [
+        [150, 151, 152, 179, 153, 154, 155, 156, 157],          # the train (the Hookshot manual 4th)
+        [158, 159, 160, 161, 162, 163, 164, 166, 167, 168],     # the Training Facility
+        [169, 170, 171, 172, 173, 174, 175, 176, 177, 178],     # the Laboratory and on
+    ]
+
+    def tab_files(self, tab):
+        owned = self.game.files_owned()
+        files = self.FILE_TABS[tab] if 0 <= tab < len(self.FILE_TABS) else []
+        return [f for f in files if owned is None or f in owned]
+
+    def file_name(self, item):
         gd = self.game_dir()
         from . import gmd
-        name = None
-        if item is not None and gd:
-            labels = gmd.archive(gd).get("message_item_name_eng", ({}, []))[0]
-            name = R.item_name(labels, item)
-        if mode == 6 and (was is None or was[0] != 6):
+        if not gd:
+            return "File"
+        labels = gmd.archive(gd).get("message_item_name_eng", ({}, []))[0]
+        return R.item_name(labels, item) or "File"
+
+    def poll_files(self):
+        """The Files page of the item screen is pictures: say the tab, the file the cursor is on,
+        and each page of a file as it is turned."""
+        fs = self.game.files_screen()
+        if fs is None and not getattr(self, "_files_primed", False) and self.scene is not None:
+            self._files_primed = self.game.files_owned() is not None   # (found ahead of time)
+        state = None
+        if fs is not None:
+            mode = fs[0]
+            tab = fs[1]
+            idx = self.game.files_index()
+            page = self.game.file_reader() if mode == 10 else None
+            if page is not None and page > 1000:
+                page = None             # (-1 while it opens)
+            state = (mode, tab, idx, page)
+        was = getattr(self, "files_was", None)
+        self.files_was = state
+        if state is None or state == was:
+            return
+        mode, tab, idx, page = state
+        files = self.tab_files(tab)
+        if mode == 3 and (was is None or was[0] != 3 or was[1] != tab):
+            n = len(files)
+            self.say("Files %d, %s." % (tab + 1, "%d file%s" % (n, "" if n == 1 else "s") if n else "empty"),
+                     interrupt=True)
+        elif mode == 6 and (was is None or was[0] != 6 or was[2] != idx):
+            if 0 <= (idx or 0) < len(files):
+                self.say("%s, %d of %d" % (self.file_name(files[idx]), idx + 1, len(files)), interrupt=True)
+            else:
+                self.say("File %d" % ((idx or 0) + 1), interrupt=True)
+        elif mode == 10 and page is not None and page >= 0 and (was is None or was[0] != 10 or was[3] != page):
+            item = files[idx] if idx is not None and 0 <= idx < len(files) else None
+            gd = self.game_dir()
+            from . import gmd
             pages = gmd.file_pages(gd, item) if item is not None and gd else []
-            self.say(" ".join(pages) if pages else "This file can't be read out.", interrupt=True)
-            self.file_said = (None, 0.0)
-        elif mode != 6 and (was is None or was[1] != cur):
-            words = "%s, %d of %d" % (name, cur + 1, len(owned)) if name else "File %d" % (cur + 1)
-            last = getattr(self, "file_said", (None, 0.0))
-            if words != last[0] or time.monotonic() - last[1] > 2.0:
-                self.say(words, interrupt=True)
-            self.file_said = (words, time.monotonic())
+            if not pages:
+                self.say("This file can't be read out.", interrupt=True)
+            elif page == 0:
+                self.say("%s. %d page%s. Right for the next page." % (pages[0].rstrip(". "), len(pages) - 1,
+                                                                    "" if len(pages) == 2 else "s"),
+                         interrupt=True)
+            elif page < len(pages):
+                self.say("%s%s" % (pages[page], " End of file." if page == len(pages) - 1 else ""), interrupt=True)
 
     # -- picking up items ----------------------------------------------------------------
     def poll_taken(self):
@@ -743,6 +848,7 @@ class RoomList:
             if m is None:
                 try:
                     m = NavMesh(self._walls_e() + self._tris_a, clearance=clearance, up_only=True)
+                    self.apply_spots(m)
                 except Exception:
                     logging.exception("second walk map")
                     return
@@ -751,6 +857,125 @@ class RoomList:
                 self.mesh = m
                 logging.info("walk map: second one, clearance %d", clearance)
                 return
+
+    @staticmethod
+    def _walls_of(tris):
+        out = []
+        for a, b, c in tris:
+            ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+            vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            ln = math.sqrt(nx * nx + ny * ny + nz * nz)
+            if ln < 1e-6 or abs(ny) / ln < 0.35:
+                out.append((a, b, c))
+        return out
+
+    def fix_door_heights(self):
+        """A door's zone can sit at height 0 whatever floor the door is on (the game looks only at
+        where you stand from above): the Large Hall's doors on its high walkway. A door with no
+        floor at its own height beside it - but a pocket shut in by walls - goes on the floor
+        beside it that is part of the room you walk round."""
+        rd = self.room_data
+        m = self.mesh_main
+        if not rd or not m:
+            return
+        up = None
+        for th in rd.things:
+            if th.kind != "door" or not getattr(th, "box", None):
+                continue
+            x, z = th.pos[0] * MM, th.pos[2] * MM
+            y = th.box[0][1] * MM
+            try:
+                if self.own_floor(m, x, y, z):
+                    continue
+                if up is None:
+                    up = NavMesh(self._tris_e, up_only=True)
+                found = up.main_floor_near(x, z)
+            except Exception:
+                logging.exception("door height")
+                continue
+            if not found or found[0] - y <= 600.0:
+                continue        # (only ever up: a door on the floor of a pit stays there)
+            dy = (found[0] - y) / MM
+            (x0, y0, z0), (x1, y1, z1) = th.box
+            th.box = ((x0, y0 + dy, z0), (x1, y1 + dy, z1))
+            th.pos = (th.pos[0], th.pos[1] + dy, th.pos[2])
+            logging.info("door %s: on the floor at %.0f, not %.0f", th.name, th.pos[1], th.pos[1] - dy)
+
+    @staticmethod
+    def own_floor(m, x, y, z, radius=1200.0):
+        """True if there is floor about at height y near (x, z) that is a real part of the room."""
+        c0, r0 = m.cell(x, z)
+        n = int(radius // 150.0) + 1
+        for dc in range(-n, n + 1):
+            for dr in range(-n, n + 1):
+                for i, h in enumerate(m.heights.get((c0 + dc, r0 + dr), ())):
+                    if abs(h - y) > 300.0 or (c0 + dc, r0 + dr, i) in m.blocked:
+                        continue
+                    cx, cz = m.centre(c0 + dc, r0 + dr)
+                    label = m.region(cx, h, cz)
+                    if label is not None and m.region_size(label) >= 400:
+                        return True
+        return False
+
+    def fix_step_heights(self):
+        """Steps up onto a platform (op 99): their zones are at the level they take you to; put
+        each at the level you stand on to use it - the other floor there. True if any."""
+        rd = self.room_data
+        steps = [th for th in (rd.things if rd else []) if getattr(th, "step", False)]
+        if not steps:
+            return False
+        try:
+            m = NavMesh(self._tris_e + (getattr(self, "_tris_a", None) or []), up_only=True)
+        except Exception:
+            logging.exception("step heights")
+            return False
+        for th in steps:
+            (x0, y0, z0), (x1, y1, z1) = th.box
+            zy = y0 * MM
+            hs = [h for h in m.heights.get(m.cell(th.pos[0] * MM, th.pos[2] * MM), ()) if 500.0 < abs(h - zy) <= 1300.0]
+            if not hs:
+                continue
+            h = max(hs, key=lambda v: abs(v - zy)) / MM
+            th.box = ((x0, h - 10.0, z0), (x1, h + 10.0, z1))
+            th.pos = (th.pos[0], h - 10.0, th.pos[2])
+            logging.info("step %s at %.0f,%.0f: from height %.0f", th.name, th.pos[0], th.pos[2], h)
+        for th in steps:
+            # (which way to face to use it: towards the other end of the same step)
+            other = [o for o in steps if o.way != th.way]
+            if other:
+                o = min(other, key=lambda o: math.hypot(o.pos[0] - th.pos[0], o.pos[2] - th.pos[2]))
+                th.face = math.atan2(o.pos[0] - th.pos[0], o.pos[2] - th.pos[2])
+        return True
+
+    def apply_spots(self, mesh):
+        """Give a walk map the room's places to jump down and climb up."""
+        rd = self.room_data
+        spots = [(th.way, (th.pos[0] * MM, th.box[0][1] * MM, th.pos[2] * MM))
+                 for th in (rd.things if rd else []) if th.kind == "ledge"]
+        if spots and mesh:
+            try:
+                mesh.set_spots(spots)
+            except Exception:
+                logging.exception("jump spots")
+
+    def alt_mesh(self, clearance):
+        """The second walk map (the main one's walls with the second collision file's floors
+        and stairs), made the first time it is wanted; None if there is none."""
+        if not getattr(self, "_tris_a", None) or not getattr(self, "mesh_main", None):
+            return None
+        if not hasattr(self, "_alt_meshes"):
+            self._alt_meshes = {}
+        m = self._alt_meshes.get(clearance)
+        if m is None:
+            try:
+                m = NavMesh(self._walls_e() + self._tris_a, clearance=clearance, up_only=True)
+                self.apply_spots(m)
+            except Exception:
+                logging.exception("second walk map")
+                m = False
+            self._alt_meshes[clearance] = m
+        return m or None
 
     def _walls_e(self):
         """The main walk map's walls only (its flat tops of furniture would make steps up to
@@ -781,22 +1006,103 @@ class RoomList:
         return best        # (None: no ground near it on this map: no way there)
 
     def plan(self, p, goal, gy=None):
+        """The way to goal; when there is none on foot, one with a jump down (or a climb up) at
+        an edge: then the way only as far as that edge, and plan_ledge says which."""
+        self.plan_ledge = None
+        way = self.plan_on(p, goal, gy)
+        joined = self.plan_joined
+        end = way[-1] if way else (p[0] * MM, p[2] * MM)
+        short = way is None or (getattr(self, "plan_kind", None) == "door" and
+                                (not joined or math.hypot(end[0] - goal[0], end[1] - goal[1]) > 900.0))
+        rd = self.room_data
+        spots = bool(rd) and any(th.kind == "ledge" for th in rd.things)
+        if short and self.mesh and spots:
+            # (no way, or only to somewhere short of it: over an edge, if that gets there - only
+            # in a room with the game's own places to jump down and climb up, as the sewer)
+            alt = self.plan_on(p, goal, gy, ledges=True)
+            ledge = getattr(self.mesh, "last_ledge", None)
+            if alt is not None and ledge:
+                self.plan_ledge = ledge
+                return alt
+        self.plan_joined = joined
+        return way
+
+    def plan_on(self, p, goal, gy=None, ledges=False):
         if not self.mesh:
             return []
         y = p[1] * MM
+        self.plan_joined = True
         gyy = self.floor_at(goal[0], goal[1], gy, y)
         if gyy is None:
-            if gy is not None and abs(gy * MM - y) > 1500:
-                return None
-            gyy = y
-        way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]))
+            gyy = gy * MM if gy is not None else y      # (no ground right there: the nearest at its height)
+        extra = tuple(getattr(self, "walk_blocks", {}).get(self.scene, ())) + tuple(self.push_extra())
+        way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]), extra=extra, ledges=ledges)
+        self.plan_floor_ok = self.route_floors_ok(ledges)
+        if way is None and gy is not None and abs(gy * MM - gyy) > 300:
+            # (the ground right under it is lower, as water under a ladder's foot: the floor
+            # beside it at its own height)
+            gyy = gy * MM
+            way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]), extra=extra, ledges=ledges)
+            self.plan_floor_ok = self.route_floors_ok(ledges)
+        # (a way can end only near it - as near as this map gets - on another floor: the stairs
+        # to it missing from this map; joined says it really gets there)
+        try:
+            self.plan_joined = self.mesh.joined_near((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]))
+        except Exception:
+            logging.exception("joined")
+            self.plan_joined = True
+        if not self.plan_floor_ok:
+            # (this map has you, or the end of the way, on another floor - standing on the Main
+            # Hall's balcony right over the Dining Room door, a map without the balcony said
+            # "Here" at once: the way does not really get there)
+            self.plan_joined = False
         return way
 
-    def start_walk(self, guide=False):
-        t = self.current_target()
+    def route_floors_ok(self, ledges=False):
+        """After a route on self.mesh: True unless it started on another floor than yours, or
+        (on foot) ended on another floor than the one asked for."""
+        m = self.mesh
+        sdy = getattr(m, "last_start_dy", None)
+        edy = getattr(m, "last_end_dy", None)
+        if sdy is not None and sdy > 600.0:
+            return False
+        if edy is not None and edy > 900.0 and not (ledges and getattr(m, "last_ledge", None)):
+            return False
+        return True
+
+    def learn_block(self, p, h):
+        """Walked into something the walk map does not have (a statue, a way the game keeps shut
+        till later) twice at the same place: remember it for this room, so the way goes round."""
+        x, y, z = p[0] * MM, p[1] * MM, p[2] * MM
+        last = getattr(self, "last_bump", None)
+        self.last_bump = (x, z, self.scene)
+        if not last or last[2] != self.scene or math.hypot(last[0] - x, last[1] - z) > 1200.0:
+            return False
+        blocks = getattr(self, "walk_blocks", None)
+        if blocks is None:
+            blocks = self.walk_blocks = {}
+        bx, bz = x + math.sin(h) * 450.0, z + math.cos(h) * 450.0
+        mine = blocks.setdefault(self.scene, [])
+        mine.append((bx, y, bz, 450.0))
+        del mine[:-24]
+        self.last_bump = None
+        logging.info("walk: learnt something in the way at %.0f,%.0f", bx / MM, bz / MM)
+        return True
+
+    def start_walk(self, guide=False, target=None):
+        t = target or self.current_target()
         if t is None:
             self.say("Pick something in the list first.", interrupt=True)
             return
+        if getattr(t, "push", False):
+            self.start_push_walk(t, guide)      # (to the side to push it from)
+            return
+        if target is None and self.start_top_walk(t, guide):
+            return                              # (up onto the table to get at it)
+        if target is None and self.start_off_table(t, guide):
+            return                              # (down off the table first)
+        if target is None:
+            self.push_plan = None
         self.load_room()
         p, h = self.where_me()
         if not p or h is None:
@@ -808,8 +1114,56 @@ class RoomList:
         self.pick_mesh(p)
         goal, face = self.goal_for(t)
         gy = (t.box[0][1] + t.box[1][1]) / 2 if getattr(t, "box", None) else t.pos[1]
+        # (an edge to jump down or climb up only on the way to a door or ladder, to a side to push
+        # something from, or to a thing up on another level in a room with steps - the Small
+        # Library's platform - or when there is no other way at all)
+        doorish = t.kind == "door" or getattr(t, "push_of", None) is not None
+        rd0 = self.room_data
+        if not doorish and rd0 and (t.kind == "check" or any(th.kind == "ledge" for th in rd0.things)):
+            # (a check's zone is on the floor you stand on to use it: the lecture room's lectern is
+            # up on the stage, reached by the steps at its sides)
+            gyy = self.floor_at(goal[0], goal[1], gy, p[1] * MM)
+            doorish = gyy is not None and abs(gyy - p[1] * MM) > 600.0
+        self.plan_kind = "door" if doorish else t.kind
         way = self.plan(p, goal, gy)
+
+        def far(w):
+            end = w[-1] if w else (p[0] * MM, p[2] * MM)
+            return math.hypot(end[0] - goal[0], end[1] - goal[1]) > 900.0
+        def length(w):
+            pts = [(p[0] * MM, p[2] * MM)] + list(w or [])
+            return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
+        joined = self.plan_joined
+        if (way is None or self.plan_ledge or not joined or far(way) or doorish) and \
+                (way is None or doorish or abs(gy - p[1]) > 100.0):
+            # (the map picked may not reach it: standing in a doorway the main map walls off, or
+            # stairs only the second collision file has whole - the Main Hall's; try the others:
+            # a way on foot that gets there first, then one over an edge, then what there was)
+            picked = self.mesh
+            tries = [(picked, way, self.plan_ledge, joined)]
+            for m in [getattr(self, "mesh_main", None), self.alt_mesh(200.0), self.alt_mesh(120.0)]:
+                if m and m is not picked:
+                    self.mesh = m
+                    w = self.plan(p, goal, gy)
+                    tries.append((m, w, self.plan_ledge, self.plan_joined))
+            # (of the ways on foot that get there, the shortest: in the Main Hall the main map's
+            # long ways round go through the passage the scales keep shut)
+            good = sorted((x for x in tries if x[1] is not None and not x[2] and x[3] and not far(x[1])),
+                          key=lambda x: length(x[1]) * (1.2 if x[0] is self._alt_meshes.get(120.0) else 1.0))
+            pick = (good[0] if good else None) or \
+                next((x for x in tries if x[1] is not None and x[2]), None) or \
+                next((x for x in tries if x[1] is not None and not x[2] and x[3]), None) or tries[0]
+            self.mesh, way, self.plan_ledge, joined = pick
+            if pick[0] is not picked:
+                logging.info("walk map: another one reaches %s", t.name)
+        if way is not None and not joined and not self.plan_ledge and doorish and abs(gy - p[1]) > 150.0:
+            way = None              # (only to under it, on this floor: say it is upstairs)
         self.walk_gy = gy
+        self.walk_ledge = None
+        self.ledge_wait = None
+        if way is not None and getattr(self, "plan_ledge", None):
+            self.walk_to_ledge(t, p, way, guide)
+            return
         if way is None:
             far = (", it's downstairs" if p[1] - gy > 150 else ", it's upstairs" if gy - p[1] > 150 else "")
             self.say("No way there from here%s." % far, interrupt=True)
@@ -830,6 +1184,27 @@ class RoomList:
             r = self.ITEM_REACH
             t.outline = [(x - r, z - r), (x + r, z - r), (x + r, z + r), (x - r, z + r)]
             box = t.box = ((x - r, y, z - r), (x + r, y, z + r))
+        if getattr(t, "stand", False) and way is not None:
+            # (a lift to stand on: walk onto the middle of it)
+            outline = self.outline_of(t)
+
+            def on_it(x, z, rot, outline=outline):
+                return R.in_outline(outline, x / MM, z / MM)
+            self.walk_spot = None
+            self.walk_box = None
+            self.face_angle = None
+            self.walker.guide = guide
+            self.walker.start(t.name, t.pos[0] * MM, t.pos[2] * MM, via=way[:-1] if way else [], near=150.0,
+                              reached=None if guide else on_it, origin=(p[0] * MM, p[2] * MM))
+            self.walk_target = t
+            self.walk_scene = self.scene
+            self.guide_on = guide
+            if guide:
+                self.make_space()
+                self.say("Beacon on. " + self.thing_words(t), interrupt=True)
+            else:
+                self.say("Walking to " + t.name, interrupt=True)
+            return
         if box and t.kind in ("check", "item"):
             # A thing to check: towards the middle of it until the point the game's A looks at
             # (a little way in front of you) is on it, then stop there (standing in its box is
@@ -845,8 +1220,21 @@ class RoomList:
                 self.walk_box = None
                 self.walk_spot = True
                 self.walker.guide = guide
-                self.walker.start(t.name, cx, cz, via=via, near=150.0, face=(fx, fz),
+                gx, gz = cx, cz
+                if way and math.hypot(way[-1][0] - cx, way[-1][1] - cz) > 300.0:
+                    # (its middle cannot be stood on - a typewriter on a table: walk to a spot
+                    # beside it from which A reaches it, else to where the way ends)
+                    gx, gz = way[-1]
+                    spot = self.check_spot(t, p)
+                    if spot:
+                        sway = self.plan(p, spot[0])
+                        if sway is not None and (not sway or math.hypot(sway[-1][0] - spot[0][0], sway[-1][1] - spot[0][1]) < 450.0):
+                            via = sway[:-1] if sway else []
+                            gx, gz = spot[0]
+                            way = sway
+                self.walker.start(t.name, gx, gz, via=via, near=150.0, face=(fx, fz),
                                   reached=None if guide else reached, origin=(p[0] * MM, p[2] * MM))
+                logging.info("walk to %s: way %s, goal %.0f,%.0f", t.name, [tuple(round(v) for v in w) for w in way or []], gx, gz)
                 self.walk_target = t
                 self.walk_scene = self.scene
                 self.guide_on = guide
@@ -871,7 +1259,7 @@ class RoomList:
                 return x0 <= x <= x1 and z0 <= z <= z1 and abs(angle_diff(fa, rot)) < 0.3
             # (the game's A reaches a little way ahead of you: within about 35 cm of the box will do,
             # as against a wall in front of a door)
-            self.walk_box = (x0 * MM - 600, x1 * MM + 600, z0 * MM - 600, z1 * MM + 600)
+            self.walk_box = (x0 * MM - 900, x1 * MM + 900, z0 * MM - 900, z1 * MM + 900)
         self.walker.guide = guide
         self.walker.start(t.name, end[0], end[1], via=via, near=near, face=face,
                           reached=None if guide else reached, origin=(p[0] * MM, p[2] * MM))
@@ -883,6 +1271,164 @@ class RoomList:
             self.say("Beacon on. " + self.thing_words(t), interrupt=True)
         else:
             self.say("Walking to " + t.name, interrupt=True)
+
+    LEDGE_WORDS = {"down": "Edge. Press A to jump down.", "up": "Edge. Press A to climb up."}
+
+    def ledge_spot(self, kind, frm, p):
+        """The room's own place to jump down (or climb up) nearest the edge planned, at the height
+        you are at, or None."""
+        rd = self.load_room()
+        best = None
+        for th in (rd.things if rd else []):
+            if th.kind != "ledge" or getattr(th, "way", None) != kind:
+                continue
+            if abs(th.box[0][1] - p[1]) > 60.0:
+                continue                            # (the spot for the other level)
+            d = math.hypot(th.pos[0] * MM - frm[0], th.pos[2] * MM - frm[1])
+            if best is None or d < best[0]:
+                best = (d, th)
+        return best[1] if best else None
+
+    def walk_to_ledge(self, t, p, way, guide):
+        """The way to t goes over an edge: walk to it and face across, then the player presses
+        A; once they are down (or up) the walk to t goes on by itself."""
+        kind, frm, to = self.plan_ledge
+        self.walk_ledge = (kind, frm, to)
+        self.ledge_goal = t
+        spot = self.ledge_spot(kind, frm, p)
+        if spot is not None:
+            # (the game only lets you down or up at its own spots: walk to the one there, like
+            # to a thing to check, until A reaches it)
+            self.plan_kind = "ledge"
+            sway = self.plan(p, (spot.pos[0] * MM, spot.pos[2] * MM), spot.pos[1])
+            self.plan_ledge = None
+            if sway is not None:
+                cx, cz = spot.pos[0] * MM, spot.pos[2] * MM
+                self.walk_spot = True
+                self.walk_box = None
+                self.face_angle = None
+                self.settling = None
+                self.turning = None
+                self.walker.guide = guide
+                self.walk_target = spot
+                self.walk_scene = self.scene
+                self.guide_on = guide
+
+                def reached(x, z, rot, s=spot):
+                    return self.can_reach(s, x, z, rot)
+                if getattr(spot, "step", False) and getattr(spot, "face", None) is not None:
+                    # (a step: stood on its zone - the game only lets you up or down from there -
+                    # then facing across it)
+                    outline = self.outline_of(spot)
+                    self.walk_spot = None
+                    self.face_angle = spot.face
+
+                    def reached(x, z, rot, outline=outline):
+                        return R.in_outline(outline, x / MM, z / MM)
+                self.walker.start(spot.name, cx, cz, via=sway[:-1] if sway else [], near=150.0, face=(cx, cz),
+                                  reached=None if guide else reached, origin=(p[0] * MM, p[2] * MM))
+                if guide:
+                    self.make_space()
+                    self.say("Beacon on. %s, over an edge." % t.name, interrupt=True)
+                else:
+                    self.say("Walking to %s, %s an edge first." % (t.name, kind), interrupt=True)
+                return
+        self.walk_spot = None
+        self.walk_box = None
+        self.settling = None
+        self.face_angle = math.atan2(to[0] - frm[0], to[1] - frm[1])
+        fa = self.face_angle
+        face = (frm[0] + math.sin(fa) * 400.0, frm[1] + math.cos(fa) * 400.0)
+        self.walk_target = t
+        self.walk_scene = self.scene
+        self.guide_on = guide
+        self.walker.guide = guide
+        if not way:
+            # (at the edge already: only turn to it)
+            self.turning = (fa, time.monotonic() + 3.0, t)
+            self.say("Walking to %s: an edge first." % t.name, interrupt=True)
+            return
+        self.turning = None
+        self.walker.start(t.name, frm[0], frm[1], via=way[:-1], near=150.0, face=face,
+                          reached=None, origin=(p[0] * MM, p[2] * MM))
+        if guide:
+            self.make_space()
+            self.say("Beacon on. %s, over an edge." % t.name, interrupt=True)
+        else:
+            self.say("Walking to %s, %s an edge first." % (t.name, "down" if kind == "down" else "up"),
+                     interrupt=True)
+
+    def at_ledge(self):
+        """Arrived at the edge (and turned to it). Auto walk: press A to jump down (or climb up),
+        then on to the thing once landed. The beacon: say so, and the player presses A."""
+        kind = self.walk_ledge[0]
+        obj = self.me()
+        p = self.game.local_pos(obj) if obj else None
+        guide = self.walker.guide
+        now = time.monotonic()
+        self.ledge_wait = {"t": getattr(self, "ledge_goal", None) or getattr(self, "walk_target", None),
+                           "y0": p[1] if p else None,
+                           "since": now, "guide": guide, "presses": 0, "next": now + 0.2,
+                           "release": 0.0, "kind": kind}
+        self.walk_ledge = None
+        if guide:
+            self.stop_walk(self.LEDGE_WORDS[kind])
+        else:
+            self.stop_walk("Jumping down." if kind == "down" else "Climbing up.")
+
+    def poll_ledge(self):
+        """After an edge: press A (auto walk), and once down (or up), on to the thing."""
+        lw = getattr(self, "ledge_wait", None)
+        if not lw:
+            return
+        t, y0, guide = lw["t"], lw["y0"], lw["guide"]
+        now = time.monotonic()
+        if lw["release"] and now >= lw["release"]:
+            lw["release"] = 0.0
+            self.walker.hold(set())
+        if now - lw["since"] > 90.0 or t is None or y0 is None:
+            self.ledge_wait = None
+            return
+        obj = self.me()
+        p = self.game.local_pos(obj) if obj else None
+        if not p:
+            return
+        if abs(p[1] - y0) < 40.0:
+            self.ledge_stable = None
+            if not guide and not lw["release"] and now >= lw["next"]:
+                if lw["presses"] >= 4:
+                    self.ledge_wait = None
+                    self.say("Could not %s here." % ("jump down" if lw["kind"] == "down" else "climb up"),
+                             interrupt=True)
+                    return
+                if not lw.get("nudged"):
+                    # (a step on into the edge first: the spot is a little beyond where the walk
+                    # keeps off the wall)
+                    lw["nudged"] = True
+                    lw["release"] = now + (0.5 if lw["presses"] == 0 else 0.3)
+                    lw["next"] = lw["release"] + 0.15
+                    self.walker.hold({"up"})
+                    return
+                lw["nudged"] = False
+                lw["presses"] += 1
+                lw["next"] = now + 2.5
+                lw["release"] = now + 0.25
+                self.walker.hold({"a"})
+            return
+        key = round(p[1] / 5.0)                     # (down or up: wait for the landing to finish)
+        st = getattr(self, "ledge_stable", None)
+        if not st or st[0] != key:
+            self.ledge_stable = (key, now)
+            return
+        if now - st[1] < 0.8:
+            return
+        self.ledge_wait = None
+        self.ledge_stable = None
+        if lw["release"]:
+            self.walker.hold(set())
+        cur = self.current_target()
+        if cur is not None and cur.name == t.name:
+            self.start_walk(guide=guide)
 
     @staticmethod
     def box_facing(box, frm):
@@ -942,20 +1488,32 @@ class RoomList:
                     sx, sz = tx - nx * (self.REACH + back), tz - nz * (self.REACH + back)
                     cands.append(((sx, sz), math.atan2(nx, nz), back))
 
-        def roomy(x, z):
-            # (free there and a hand's width round it: the walk mesh misses the smaller things)
-            return all(self.mesh.free_at(x + dx, y, z + dz)
-                       for dx, dz in ((0, 0), (150, 0), (-150, 0), (0, 150), (0, -150)))
-        free = [c for c in cands if roomy(c[0][0], c[0][1])]
-        if not free:
-            free = [c for c in cands if self.mesh.free_at(c[0][0], y, c[0][1])]
+        # (where the player can stand: closer to a table than the walk map keeps)
+        if not hasattr(self, "_alt_meshes"):
+            self._alt_meshes = {}
+        fine = self._alt_meshes.get("fine")
+        if fine is None:
+            try:
+                # (with the walls of the second collision file too: the counter round the Main
+                # Hall's typewriter is only there)
+                fine = NavMesh(self._tris_e + self._walls_of(getattr(self, "_tris_a", None) or []), clearance=170.0)
+            except Exception:
+                logging.exception("fine walk map")
+                fine = False
+            self._alt_meshes["fine"] = fine
+        stand = fine or self.mesh
+        mine = stand.region(p[0] * MM, y, p[2] * MM)
+        # (free, and joined to where you are: not inside a counter whose walls close it round)
+        free = [c for c in cands if stand.free_at(c[0][0], y, c[0][1], reach=150.0) and
+                (mine is None or stand.region(c[0][0], y, c[0][1]) == mine)]
         if not free:
             return None
         me = (p[0] * MM, p[2] * MM)
-        free.sort(key=lambda c: math.hypot(c[0][0] - me[0], c[0][1] - me[1]) + c[2] * 3)
-        for c in free[:6]:
+        # (one from which A reaches it as it is first, nearest you; stepping in only if none)
+        free.sort(key=lambda c: (c[2], math.hypot(c[0][0] - me[0], c[0][1] - me[1])))
+        for c in free[:10]:
             way = self.plan(p, c[0])
-            if way is not None:
+            if way is not None and (not way or math.hypot(way[-1][0] - c[0][0], way[-1][1] - c[0][1]) < 450.0):
                 return c[0], c[1]
         return None
 
@@ -967,6 +1525,8 @@ class RoomList:
     def reach_facing(self, t, p):
         """The way to face from p (cm) so the game's A reaches the thing: the nearest way to
         straight at its middle that does."""
+        if getattr(t, "face", None) is not None:
+            return t.face               # (a step up or down: across it, to the other level)
         x, z = p[0] * MM, p[2] * MM
         base = math.atan2(t.pos[0] * MM - x, t.pos[2] * MM - z)
         for k in range(0, 25):
@@ -1013,6 +1573,14 @@ class RoomList:
             return ways[0]
         return math.atan2(sx, sz)
 
+    @staticmethod
+    def box_gap(box, p):
+        """How far (cm) p is from the box seen from above: 0 inside it."""
+        (x0, _y0, z0), (x1, _y1, z1) = box
+        dx = max(x0 - p[0], 0.0, p[0] - x1)
+        dz = max(z0 - p[2], 0.0, p[2] - z1)
+        return math.hypot(dx, dz)
+
     def in_walk_box(self, p):
         b = getattr(self, "walk_box", None)
         return b is None or (b[0] <= p[0] * MM <= b[1] and b[2] <= p[2] * MM <= b[3])
@@ -1031,6 +1599,11 @@ class RoomList:
         if abs(d) < 0.15 or time.monotonic() > until:
             self.turning = None
             self.walker.hold(set())
+            if getattr(self, "walk_ledge", None):
+                self.at_ledge()
+                return
+            if getattr(t, "push_of", None) is not None and self.push_arrived():
+                return
             p = self.game.local_pos(obj)
             spot = getattr(self, "walk_spot", None)
             box = getattr(t, "box", None) if t is not None else None
@@ -1095,6 +1668,12 @@ class RoomList:
             return
         if self.can_reach(t, p[0] * MM, p[2] * MM, h):
             self.settling = None
+            if getattr(self, "walk_ledge", None):
+                if getattr(t, "face", None) is not None and abs(angle_diff(t.face, h)) > 0.2:
+                    self.turning = (t.face, time.monotonic() + 3.0, t)     # (across the step first)
+                    return
+                self.at_ledge()
+                return
             self.stop_walk("Here. Press A.")
             return
         if tries < 3:
@@ -1149,7 +1728,36 @@ class RoomList:
                 self.space.chime()
         if res is None:
             return
+        logging.info("walk: %s at %.0f,%.0f", res, p[0], p[2])
         t = getattr(self, "walk_target", None)
+        if res in ("arrived", "near") and getattr(self, "walk_ledge", None) and not getattr(self, "walk_spot", None):
+            if self.space:
+                self.space.quiet()
+            fa = self.face_angle
+            if abs(angle_diff(fa, h)) < 0.2:
+                self.at_ledge()
+            else:
+                self.walker.stop()
+                self.turning = (fa, time.monotonic() + 3.0, t)
+            return
+        if res in ("arrived", "near") and t is not None and getattr(t, "push_of", None) is not None \
+                and getattr(self, "push_plan", None):
+            # (at the side to push the table from: turn the way it is to go)
+            if self.space:
+                self.space.quiet()
+            self.walker.stop()
+            self.turning = (self.push_plan["heading"], time.monotonic() + 3.0, t)
+            return
+        if res in ("arrived", "near") and t is not None and getattr(t, "stand", False):
+            if self.space:
+                self.space.quiet()
+            if getattr(t, "face", None) is not None and getattr(t, "push_of", None) is None:
+                # (a seat: stood behind its desk, then facing it)
+                self.walker.stop()
+                self.turning = (t.face, time.monotonic() + 3.0, t)
+                return
+            self.stop_walk("On the %s." % t.name.lower() if R.in_outline(self.outline_of(t), p[0], p[2]) else "Here.")
+            return
         if res in ("arrived", "near"):
             guide_was = self.walker.guide
             if self.space:
@@ -1166,7 +1774,9 @@ class RoomList:
                 self.walker.stop()
                 self.settling = [t, time.monotonic() + 0.45, 0, 0.0]
                 return
-            if getattr(self, "walk_spot", None) and t is not None:
+            if t is not None and getattr(t, "face", None) is not None:
+                fa = t.face                     # (a step up or down: across it, to the other level)
+            elif getattr(self, "walk_spot", None) and t is not None:
                 fa = self.reach_facing(t, p)
             elif fa is not None and box:
                 # (from where you have ended up: the way planned can end on the far side)
@@ -1192,6 +1802,22 @@ class RoomList:
                 self.beeps.quiet()
             self.turning = (fa, time.monotonic() + 3.0, t)
             return
+        elif res in ("bump", "blocked", "gave up") and getattr(self, "walk_ledge", None) and t is not None and \
+                math.hypot(t.pos[0] - p[0], t.pos[2] - p[2]) < 250.0:
+            # (up against the edge by the spot to jump down or climb up: turn to it, step in, A)
+            self.walker.stop()
+            self.turning = (math.atan2(t.pos[0] - p[0], t.pos[2] - p[2]), time.monotonic() + 3.0, t)
+            return
+        elif res in ("bump", "blocked", "gave up") and t is not None and t.kind == "door" and \
+                getattr(t, "box", None) and self.box_gap(t.box, p) < 100.0:
+            # (a ladder hatch or a door behind a rail: as near as the walk gets, within reach of it -
+            # turn to it there)
+            (x0, _y0, z0), (x1, _y1, z1) = t.box
+            fa = math.atan2((x0 + x1) / 2 - p[0], (z0 + z1) / 2 - p[2])
+            self.walker.stop()
+            self.walk_box = None
+            self.turning = (fa, time.monotonic() + 3.0, t)
+            return
         elif res in ("replan", "bump", "blocked", "gave up") and getattr(self, "walk_spot", None) \
                 and t is not None and self.reach_fits(t, p):
             # (walked into something right by the thing: turning on the spot reaches it)
@@ -1199,9 +1825,17 @@ class RoomList:
             self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
             return
         elif res in ("replan", "bump"):
+            if res == "bump":
+                self.learn_block(p, h)
             goal = (self.walker.goal[1], self.walker.goal[2])
             way = self.plan(p, goal, getattr(self, "walk_gy", None))
             if way:
                 self.walker.reroute(way[:-1], way[-1][0], way[-1][1], (p[0] * MM, p[2] * MM))
+        elif res in ("blocked", "gave up") and getattr(self, "walk_ledge", None) and t is not None and \
+                math.hypot(t.pos[0] - p[0], t.pos[2] - p[2]) < 250.0:
+            # (up against the wall under the spot to climb: turn to it, step in and press A)
+            self.walker.stop()
+            self.turning = (math.atan2(t.pos[0] - p[0], t.pos[2] - p[2]), time.monotonic() + 3.0, t)
+            return
         elif res in ("blocked", "gave up"):
             self.stop_walk("Something is in the way. " + (self.thing_words(t) if t else ""))
