@@ -17,6 +17,7 @@ from . import room as R
 from .game import STAGE_CODES, STAGE_FIRST, enemy_name, scene_code, scene_words
 from .mem import NotReady
 from .nav import NavMesh
+from . import nav as _nav
 from . import sbc
 from .walker import Walker, angle_diff
 from .push import PushMixin
@@ -37,6 +38,11 @@ def metres(cm):
     if m < 1.5:
         return "1 metre"
     return "%d metres" % round(m)
+
+
+# Rooms where the ground under a staircase is no way through (the walk went in under the steps and
+# got stuck): the Cavernous Area, to the Training Room door.
+LOW_HEAD_ROOMS = {"dm09"}
 
 
 class RoomList(PushMixin):
@@ -117,6 +123,7 @@ class RoomList(PushMixin):
             return None
         code, n = scene_code(self.scene)
         name = "%s%02x" % (code, n)
+        _nav.HEADROOM_ON = name in LOW_HEAD_ROOMS
 
         def scene_of(stage, room):
             if stage >= len(STAGE_FIRST):
@@ -135,7 +142,7 @@ class RoomList(PushMixin):
             if key in ents:
                 tris = sbc.triangles(sbc.unpack(d, ents[key]))
                 self._tris_e = [tuple(tuple(c * MM for c in p) for p in t) for t in tris]
-                self.mesh = self.mesh_main = NavMesh(self._tris_e)
+                self.mesh = self.mesh_main = NavMesh(self._tris_e, ceilings=True)
                 self.apply_spots(self.mesh_main)
                 self.fix_door_heights()
                 key_a = "scene\\scr\\%sa" % name
@@ -167,10 +174,64 @@ class RoomList(PushMixin):
                 logging.info("pair: %s", [(n, "%08X" % self.mem.u32(self.mem.u32(o + 0x67B8))) for n, o in chars])
             except Exception:
                 pass
+        self.note_rooms(chars, name)
         if name and was and name != was and len(chars) == 2:
             if self.game.item_view() is not None:
                 return      # (Y on the item screen: "Rebecca's items" is said with the item)
             self.say("Now %s." % name, interrupt=True)
+
+    def note_rooms(self, chars, name):
+        """Which room each of them was last in: whoever you play as is in this one, and so is
+        your partner while they are with you; one left behind stays where you last saw them."""
+        now = time.monotonic()
+        if self.scene is None or now < getattr(self, "rooms_next", 0.0):
+            return
+        self.rooms_next = now + 1.0
+        seen = getattr(self, "char_scene", None)
+        if seen is None:
+            seen = self.char_scene = {}
+        # (where the story moves someone you are not playing as: after the power panel, Rebecca
+        # falls through the Torture Room's floor into the chasm under the basement's Storage Room)
+        moved = getattr(self, "story_moves", None)
+        if moved and name and moved[0] != name:
+            seen[moved[0]] = moved[1]
+            self.story_moves = None
+        if self.scene == 0x62 and name == "Billy" and seen.get("Rebecca") in (None, 0x58, 0x62):
+            seen["Rebecca"] = 0x5B      # (the Torture Room with its floor gone: she is below)
+        for n, obj in chars:
+            if n == name:
+                seen[n] = self.scene
+                continue
+            pos = self.game.local_pos(obj)
+            if pos and getattr(self, "mesh_main", None) and self.on_floor(pos, 100.0):
+                seen[n] = self.scene
+
+    def partner_way(self, name):
+        """(the room your partner is in, the door here to take towards it) - either can be None."""
+        sc = getattr(self, "char_scene", {}).get(name)
+        if sc is None or sc == self.scene:
+            return None, None
+        from .rooms import place
+        from .game import STAGE_NAMES
+        there = scene_words(sc)
+        if scene_code(sc)[0] != scene_code(self.scene)[0]:
+            there += ", %s" % STAGE_NAMES.get(scene_code(sc)[0], "")      # (the Storage Room in the basement)
+        g = getattr(self, "room_graph", None)
+        if g is None:
+            gd = self.game_dir()
+            if not gd:
+                return there, None
+            from .rooms import RoomGraph
+            g = self.room_graph = RoomGraph(gd)
+        path = g.way(place(self.scene), place(sc))
+        if not path or len(path) < 2:
+            return there, None
+        rd = self.load_room()
+        for t in (rd.things if rd else []):
+            if t.kind == "door" and getattr(t, "target", None) is not None and \
+                    place(t.target) == path[1] and not t.name.startswith(("Air vent", "Hole")):
+                return there, t
+        return there, None
 
     def where_me(self):
         obj = self.me()
@@ -200,9 +261,16 @@ class RoomList(PushMixin):
             for obj, ek, pos, hp in self.game.enemies():
                 if hp <= 0:
                     continue
+                high = 0.0
                 if getattr(self, "mesh_main", None) and not self.on_floor(pos, 100.0):
-                    continue        # (in the next car or room, not this one)
-                out.append(R.Thing("enemy", enemy_name(ek), pos, obj=obj, hp=hp, top=self.enemy_top(obj, hp)))
+                    # (in the next car or room, not this one - unless it is over a floor of this
+                    # one: a spider up on the wall or the ceiling)
+                    under = [h / MM for h in self.floor_heights(pos[0] * MM, pos[2] * MM) if h / MM < pos[1]]
+                    if not under or pos[1] - max(under) > 450.0:
+                        continue
+                    high = pos[1] - max(under)
+                out.append(R.Thing("enemy", enemy_name(ek), pos, obj=obj, hp=hp, top=self.enemy_top(obj, hp),
+                                   high=high))
         elif kind == "partner":
             mine = self.me()
             for name, obj in self.game.characters():
@@ -416,6 +484,8 @@ class RoomList(PushMixin):
         if t.kind == "enemy" and getattr(t, "hp", None) is not None:
             top = self.enemy_top(t.obj, t.hp)
             name = "%s, %d percent" % (name, max(1, round(100.0 * t.hp / top)))
+            if getattr(t, "high", 0.0) > 120.0:
+                name += ", up high"     # (on the wall or the ceiling)
         if t.kind == "partner" and getattr(t, "hp", None) is not None:
             name = "%s, health %d percent" % (name, t.hp)
         if getattr(t, "push", False):
@@ -423,10 +493,16 @@ class RoomList(PushMixin):
         if not p:
             return name
         if getattr(t, "away", False):
+            if t.kind == "partner":
+                there, door = self.partner_way(t.name)
+                if there:
+                    return "%s, in %s%s" % (name, there, (", through %s" % door.name) if door else "")
             return name + ", in another room"
         d = math.hypot(t.pos[0] - p[0], t.pos[2] - p[2])
         words = "%s, %s, %s" % (name, metres(d), self.way_words(t.pos[0], t.pos[2], p, h))
-        if t.pos[1] - p[1] > 150:
+        if getattr(t, "high", 0.0) > 120.0:
+            pass                # (up on the wall or the ceiling, said already: not another floor)
+        elif t.pos[1] - p[1] > 150:
             words += ", upstairs"
         elif p[1] - t.pos[1] > 150:
             words += ", downstairs"
@@ -580,28 +656,71 @@ class RoomList(PushMixin):
             self.say(words, interrupt=True)
 
     def poll_pass_number(self, v):
-        """How many to pass over (pictures on screen): "0 of 15", then each change."""
+        """How many to pass over (pictures on screen): "0 of 15", then each change. Left passes
+        yours to your partner, right takes theirs (15 rounds a press for Handgun Ammo); a press
+        that changes nothing - right with none of theirs to take, left with all yours already -
+        says so, as the game does not."""
         _k, n, own_slot, partner_slot = v
         was = getattr(self, "number_was", None)
         self.number_was = n
-        if was == n:
-            return
-        top = None
+        now = time.monotonic()
         c = self.game.controlled()
+        mine_n = theirs_n = 0
+        item = 0
+        partner = "your partner"
         if c:
             mine = self.game.inventory(c[0])
             others = [w for w, _ in self.game.characters() if w != c[0]]
             theirs = self.game.inventory(others[0]) if others else []
+            if others:
+                partner = others[0]
             if own_slot < len(mine) and mine[own_slot][0] > 0:
-                top = mine[own_slot][1]
-            elif partner_slot < len(theirs) and theirs[partner_slot][0] > 0:
-                top = theirs[partner_slot][1]
-        # (counted towards you: right takes your partner's, left passes yours to them)
-        words = "%d of %d" % (abs(n), top) if top else "%d" % abs(n)
+                mine_n, item = mine[own_slot][1], mine[own_slot][0]
+            if partner_slot < len(theirs) and theirs[partner_slot][0] > 0:
+                theirs_n = theirs[partner_slot][1]
+                item = item or theirs[partner_slot][0]
+        top = mine_n or theirs_n
+        # (a press: the stick or the pad, left or right)
+        d = 0
+        try:
+            real = self.link.real()
+            if real["buttons"] & 0x4 or real["lx"] < -16000:
+                d = -1
+            elif real["buttons"] & 0x8 or real["lx"] > 16000:
+                d = 1
+        except Exception:
+            pass
+        d_was = getattr(self, "number_dir_was", 0)
+        self.number_dir_was = d
+        if d and not d_was:
+            self.number_press = (d, n, now)
         if was is None:
-            self.say(words + ". Left and right change it, then A.", interrupt=False)
-        else:
-            self.say(words, interrupt=True)
+            names = self.item_names() if hasattr(self, "item_names") else []
+            what = names[item] if 0 < item < len(names) else "it"
+            how = []
+            if mine_n:
+                how.append("left gives your %s to %s" % (what, partner))
+            if theirs_n:
+                how.append("right takes %s's" % partner)
+            words = "%d of %d" % (abs(n), top) if top else "%d" % abs(n)
+            how = ", ".join(how) or "left and right change it"
+            self.say("%s. %s, then A." % (words, how[0].upper() + how[1:]), interrupt=False)
+            return
+        if was != n:
+            self.number_press = None
+            self.say("%d of %d" % (abs(n), top) if top else "%d" % abs(n), interrupt=True)
+            return
+        pr = getattr(self, "number_press", None)
+        if pr and now - pr[2] > 0.35:
+            self.number_press = None
+            if pr[1] == n:
+                if pr[0] > 0 and n >= 0:
+                    self.say("None of %s's to take. Left gives yours." % partner if mine_n else
+                             "None to take.", interrupt=True)
+                elif pr[0] < 0 and n <= 0 and not mine_n:
+                    self.say("None of yours to give. Right takes %s's." % partner, interrupt=True)
+                else:
+                    self.say("That's all. %d of %d" % (abs(n), top) if top else "That's all.", interrupt=True)
 
     # The Files page: three tabs (left and right), each a list of files in two columns (the
     # cursor counts down the first column, then the second), then a file read a page at a time
@@ -996,14 +1115,40 @@ class RoomList(PushMixin):
         if gy is None or not self.mesh:
             return fallback
         c = self.mesh.cell(gx, gz)
-        hs = self.mesh.heights.get(c, ())
-        best = None
-        for h in hs:
-            if h > gy * MM + 400 or h < gy * MM - 1500:
-                continue
-            if best is None or abs(h - gy * MM) < abs(best - gy * MM):
-                best = h
+
+        def nearest(hs, best):
+            for h in hs:
+                if h > gy * MM + 400 or h < gy * MM - 1500:
+                    continue
+                if best is None or abs(h - gy * MM) < abs(best - gy * MM):
+                    best = h
+            return best
+        best = nearest(self.mesh.heights.get(c, ()), None)
+        if best is None or abs(best - gy * MM) > 300.0:
+            # (a map can have no floor at its own height right under it - the lecture room's
+            # lectern stands on the stage, but the squares under it have only the floor below
+            # the stage: then the floor at its height just beside it)
+            for d in (1, 2, 3):
+                ring = [(c[0] + dc, c[1] + dr) for dc in range(-d, d + 1) for dr in range(-d, d + 1)
+                        if max(abs(dc), abs(dr)) == d]
+                near = nearest([h for rc in ring for h in self.mesh.heights.get(rc, ())
+                                if self._big_floor(rc, h)], None)
+                if near is not None and (best is None or abs(best - gy * MM) - abs(near - gy * MM) > 300.0):
+                    best = near
+                    break
         return best        # (None: no ground near it on this map: no way there)
+
+    def _big_floor(self, rc, h):
+        """True if the ground at height h in square rc is part of a floor you walk round (the
+        stage), not the top of a shelf or a table."""
+        m = self.mesh
+        try:
+            cx, cz = m.centre(*rc)
+            label = m.region(cx, h, cz)
+            return label is not None and m.region_size(label) >= 150
+        except Exception:
+            logging.exception("big floor")
+            return False
 
     def plan(self, p, goal, gy=None):
         """The way to goal; when there is none on foot, one with a jump down (or a climb up) at
@@ -1109,7 +1254,14 @@ class RoomList(PushMixin):
             self.say("Not in the game.", interrupt=True)
             return
         if getattr(t, "away", False):
-            self.say("%s is in another room." % t.name, interrupt=True)
+            there, door = self.partner_way(t.name) if t.kind == "partner" else (None, None)
+            if door is None:
+                self.say("%s is in %s." % (t.name, there or "another room"), interrupt=True)
+                return
+            # (to the door that leads that way: from room to room, a door at a time)
+            self.target = door
+            self.start_walk(guide=guide, target=door)
+            self.say("%s is in %s, this way." % (t.name, there), interrupt=False)
             return
         self.pick_mesh(p)
         goal, face = self.goal_for(t)
@@ -1129,6 +1281,13 @@ class RoomList(PushMixin):
 
         def far(w):
             end = w[-1] if w else (p[0] * MM, p[2] * MM)
+            b = getattr(t, "box", None)
+            if b and t.kind == "door":
+                # (from the door's box, not its middle - a door's middle is in the wall, and a map
+                # that has the far side of it, reached the long way round, gets nearer that)
+                dx = max(b[0][0] * MM - end[0], 0.0, end[0] - b[1][0] * MM)
+                dz = max(b[0][2] * MM - end[1], 0.0, end[1] - b[1][2] * MM)
+                return math.hypot(dx, dz) > 900.0
             return math.hypot(end[0] - goal[0], end[1] - goal[1]) > 900.0
         def length(w):
             pts = [(p[0] * MM, p[2] * MM)] + list(w or [])
@@ -1225,9 +1384,9 @@ class RoomList(PushMixin):
                     # (its middle cannot be stood on - a typewriter on a table: walk to a spot
                     # beside it from which A reaches it, else to where the way ends)
                     gx, gz = way[-1]
-                    spot = self.check_spot(t, p)
+                    spot = getattr(t, "spot", None) or self.check_spot(t, p)
                     if spot:
-                        sway = self.plan(p, spot[0])
+                        sway = self.plan(p, spot[0], gy)
                         if sway is not None and (not sway or math.hypot(sway[-1][0] - spot[0][0], sway[-1][1] - spot[0][1]) < 450.0):
                             via = sway[:-1] if sway else []
                             gx, gz = spot[0]
@@ -1687,6 +1846,13 @@ class RoomList(PushMixin):
         self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
 
     def poll_walk(self):
+        if (getattr(self, "settling", None) or getattr(self, "turning", None)) and \
+                self.scene != getattr(self, "walk_scene", self.scene):
+            # (gone through: stairs you walk onto take you to the next room while auto walk is
+            # still settling there - nothing more to say, the room's name is said)
+            self.turning = None
+            self.stop_walk()
+            return
         if getattr(self, "settling", None):
             self.poll_settle()
             return

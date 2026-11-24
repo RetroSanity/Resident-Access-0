@@ -16,6 +16,9 @@ COMFORT = 650.0     # nearer a wall than this is allowed, but the way prefers no
 NEAR_COST = 2.5     # how much longer a step near a wall counts
 STEP = 320.0        # how much the ground may rise between neighbouring squares (steep stairs too)
 RISER = 260.0       # a wall no taller than this is a stair step's front (stepped up, not walked round)
+HEADROOM = (400.0, 1800.0)   # ground with other ground this much over it is under a staircase: no room to stand
+HEAD_LOG = False
+HEADROOM_ON = False     # set per room (roomlist.LOW_HEAD_ROOMS): tried everywhere, it cut the Lecture Room's back row off
 BODY = (250.0, 1000.0)   # the part of the body walls are checked against, above the ground
 
 
@@ -31,12 +34,12 @@ def _crosses(ax, az, bx, bz, cx, cz, dx, dz):
 
 
 class NavMesh:
-    def __init__(self, triangles, margin=300.0, clearance=CLEARANCE, up_only=False):
+    def __init__(self, triangles, margin=300.0, clearance=CLEARANCE, up_only=False, ceilings=False):
         """triangles: [((x, y, z), (x, y, z), (x, y, z))]. clearance: how far from a wall the
         player's middle keeps (a tighter mesh squeezes through narrow gaps). up_only: flat
         triangles facing down are ceilings, not ground (left out)."""
         self.clearance = clearance
-        floors, walls = [], []
+        floors, walls, downs = [], [], []
         for a, b, c in triangles:
             ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
             vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
@@ -50,6 +53,8 @@ class NavMesh:
                 walls.append((a, b, c))
             elif up_only and ny <= 0:
                 continue
+            elif ceilings and ny < 0 and ny_rel < 0.97:
+                downs.append((a, b, c))     # (a sloping ceiling, over stairs: see below)
             else:
                 floors.append((a, b, c))
         self.ok = bool(floors)
@@ -61,13 +66,43 @@ class NavMesh:
         self.w = int((max(xs) + margin - self.x0) / CELL) + 1
         self.h = int((max(zs) + margin - self.z0) / CELL) + 1
         self.heights = {}           # (c, r) -> [ground heights]
+        self.sloped = {}            # (c, r, i) whose ground slopes (stairs, ramps) -> how level (1 flat)
         for tri in floors:
+            self._lay_floor(tri)
+        # (ceilings: a surface facing down with ground a metre or more under it is the ceiling over
+        # that ground - the sloping one over the Main Hall's basement stairs read as a ramp from
+        # the balcony; one with nothing under it is a floor the file has upside down: kept)
+        self.dropped = 0
+        for tri in downs:
+            cx = (tri[0][0] + tri[1][0] + tri[2][0]) / 3
+            cy = (tri[0][1] + tri[1][1] + tri[2][1]) / 3
+            cz = (tri[0][2] + tri[1][2] + tri[2][2]) / 3
+            under = self.heights.get(self.cell(cx, cz), ())
+            if any(cy - 4500.0 < h < cy - 1000.0 for h in under):
+                self.dropped += 1
+                continue
             self._lay_floor(tri)
         self.walls = []             # (x1, z1, x2, z2, low, high) seen from above
         self.blocked = set()        # (c, r, i)
         self.near = set()           # free squares that are close to a wall
         for tri in walls:
             self._raise_wall(tri)
+        # (no headroom: the ground under a staircase, with the steps a little over it - the walk to
+        # the Cavernous Area's Training Room door went in under the stairs and got stuck. Only
+        # under sloping ground: under a flat floor - a balcony, a table - is left as it was)
+        self.low_head = 0
+        self.head_log = [] if HEAD_LOG else None
+        lo, hi = HEADROOM
+        for (c, r), hs in (self.heights.items() if HEADROOM_ON else ()):
+            if len(hs) < 2:
+                continue
+            for i, h in enumerate(hs):
+                if any(lo < h2 - h < hi and (c, r, j) in self.sloped for j, h2 in enumerate(hs)):
+                    if (c, r, i) not in self.blocked:
+                        self.blocked.add((c, r, i))
+                        self.low_head += 1
+                        if self.head_log is not None:
+                            self.head_log.append((c, r, h, [(h2, self.sloped.get((c, r, j))) for j, h2 in enumerate(hs)]))
         self.near -= self.blocked
 
     # ------------------------------------------------------------ building
@@ -82,6 +117,12 @@ class NavMesh:
         det = (z2 - z3) * (x1 - x3) + (x3 - x2) * (z1 - z3)
         if abs(det) < 1e-6:
             return
+        # (sloping: stairs and ramps, not a flat floor - see the headroom check)
+        ux, uy, uz = x2 - x1, y2 - y1, z2 - z1
+        vx, vy, vz = x3 - x1, y3 - y1, z3 - z1
+        nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+        n = math.sqrt(nx * nx + ny * ny + nz * nz) or 1.0
+        level = abs(ny) / n
         c0, r0 = self.cell(min(x1, x2, x3), min(z1, z2, z3))
         c1, r1 = self.cell(max(x1, x2, x3), max(z1, z2, z3))
         for r in range(max(r0, 0), min(r1, self.h - 1) + 1):
@@ -96,6 +137,8 @@ class NavMesh:
                 hs = self.heights.setdefault((c, r), [])
                 if not any(abs(y - h) < 120.0 for h in hs):
                     hs.append(y)
+                    if level < 0.97 and ny > 0:
+                        self.sloped[(c, r, len(hs) - 1)] = level   # (facing up: steps, not a ceiling)
 
     def _raise_wall(self, tri):
         pts = [(p[0], p[2]) for p in tri]
@@ -443,11 +486,13 @@ class NavMesh:
             for x, y, z, radius in extra:
                 self.block_segment(x, z, x, z, radius, y, y + 1500.0, into=blocked)
                 self.block_segment(x, z, x, z, radius + 350.0, y, y + 1500.0, into=near)
-            # Never wall in where we stand or where we are going.
-            for px, py, pz in (start, goal):
+            # Never wall in where we stand or where we are going. (Round where we stand, as far
+            # as a body's width: standing in a pocket between things to keep clear of - between
+            # the chess pieces - the way out starts there.)
+            for (px, py, pz), n in ((start, 2), (goal, 1)):
                 c, r = self.cell(px, pz)
-                for dc in (-1, 0, 1):
-                    for dr in (-1, 0, 1):
+                for dc in range(-n, n + 1):
+                    for dr in range(-n, n + 1):
                         for i in range(len(self.heights.get((c + dc, r + dr), ()))):
                             if (c + dc, r + dr, i) not in self.blocked:
                                 blocked.discard((c + dc, r + dr, i))
