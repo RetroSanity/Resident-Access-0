@@ -32,6 +32,13 @@ CHECK_NAMES = [
 ZONE_NAMES = {
     ("dm0a", 1): "Locked locker, needs the Locker Key",     # (the Training Room's, upstairs: "It's locked.")
     ("dm0a", 3): "Red button, starts a fight with Hunters",  # ("Press the button?": Battle sequence initiated)
+    # (the Statue Room's six statues, each named after the riddle on it)
+    ("dm04", 7): "Eagle statue",        # (I dance freely through the air, capturing a legless prey)
+    ("dm04", 8): "Deer statue",         # (I stand tall on the earth with horns proudly displayed)
+    ("dm04", 9): "Snake statue",        # (I creep up on my victims in legless silence...)
+    ("dm04", 10): "Wolf statue",        # (My sharp wits allow me to bring down even the greatest horned beast)
+    ("dm04", 11): "Horse statue",       # (No amount of cunning can match the speed of my supple limbs)
+    ("dm04", 12): "Panther statue",     # (I am the king of all I survey)
 }
 TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
 
