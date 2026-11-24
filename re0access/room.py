@@ -17,6 +17,23 @@ from . import sbc, gmd, names
 # kinds of script entry (the first word of each 16-byte entry at the start of the script)
 DOOR_KINDS = (0x1F, 0x04)
 CHECK_KINDS = (0x02, 0x08, 0x0E)
+# (Mixing Set, the Red, Blue and Green Chemicals, Stripping Agent, Sulfuric Acid, Battery Fluid)
+CHEMICALS = {0x7B, 0x86, 0x87, 0x88, 0x89, 0x8B, 0x8C}
+# (names from anywhere in what a thing says, where its first sentence names nothing)
+CHECK_NAMES = [
+    ("spikes are encrusted", "Spiked torture device"),
+    ("bottom of the well", "Torture well"),
+    ("could collapse at any time", "Crumbling floor"),
+    ("you can't reach it by yourself", "Something too high to reach alone"),
+    ("flames flicker mysteriously", "Flickering flames"),
+]
+# (room: (typewriter x, z, stand x, z, facing) cm)
+# Names for things whose own words do not say what they are: (room, zone) -> name.
+ZONE_NAMES = {
+    ("dm0a", 1): "Locked locker, needs the Locker Key",     # (the Training Room's, upstairs: "It's locked.")
+    ("dm0a", 3): "Red button, starts a fight with Hunters",  # ("Press the button?": Battle sequence initiated)
+}
+TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
 
 OP_TYPEWRITER = 0x51      # 00 51 01: the typewriter (save) question
 OP_MESSAGE = 0x31          # 00 31 NN 00 00: show message NN of the room's message file
@@ -125,7 +142,12 @@ class Script:
     def _door_ops(code):
         out = []
         for i in range(len(code) - 4):
-            if code[i] == 0 and code[i + 1] in OP_DOORS and code[i + 2] < 12 and code[i + 3] < 0x60:
+            if code[i] != 0 or code[i + 1] not in OP_DOORS:
+                continue
+            # (00 38 00 NN: to scene NN of the whole game - the Laboratory and on are 0x63 and up,
+            # and the Observation Room's hole Rebecca is lifted through goes to 0x61; a first byte
+            # that is not 0 is read as before, a stage and a room in it)
+            if code[i + 2] == 0 and 0 < code[i + 3] < 0xB0 or 0 < code[i + 2] < 12 and code[i + 3] < 0x60:
                 out.append((code[i + 2], code[i + 3]))
         return out
 
@@ -217,6 +239,8 @@ class RoomData:
                     low = " ".join(msgs).lower()
                     if to:
                         st, rm = to[0]
+                        if "air vent" in low and len(to) > 1:
+                            st, rm = to[-1]     # (the Observation Room's cell's vent: the first is a stray, the Main Hall)
                         target = scene_of(st, rm)
                         where = (" to " + room_words(target)) if target is not None else ""
                         if "ladder" in low:
@@ -230,6 +254,8 @@ class RoomData:
                                     "Stairs up" if mid > floor + 30 else "Stairs") + where
                         else:
                             name = "Door" + where
+                        if "air vent" in low and "boost" in low:
+                            name = "Air vent Billy lifts Rebecca up through," + where
                         self.things.append(Thing("door", name, centre, (lo, hi), target=target, zone=index, says=msgs))
                     else:
                         if not msgs:
@@ -273,6 +299,18 @@ class RoomData:
                                                  outline=_footprint(zones[index]), step=body[j + 1] == 0x99))
                         used.add(index)
                         continue
+                    if not words and kind == 0x02:
+                        # (no message of its own, but it looks for chemicals you carry - op 3d with
+                        # an item: the Medicine Room's canister, where the Mixing Set and the
+                        # chemicals are used)
+                        ids = {struct.unpack_from(">H", body, i + 2)[0] for i in range(len(body) - 3)
+                               if body[i] == 0 and body[i + 1] == 0x3D}
+                        if ids & CHEMICALS:
+                            name = "Chemical canister" if self.base_code == "sh0d" else "Place to use a chemical"
+                            self.things.append(Thing("check", name, centre, (lo, hi), zone=index,
+                                                     says=[], outline=_footprint(zones[index]), puzzle=True))
+                            used.add(index)
+                            continue
                     if not words:
                         continue        # (no message: a story event starts there, not a thing to check)
                     name = names.best_name(words) or "Something to check"
@@ -287,13 +325,26 @@ class RoomData:
                         "if you had" in low     # ("If you had some microfilm, you could view it": an item goes here)
                     # a box as wide as the room (a whole-room message) is not a place to walk to
                     area = (hi[0] - lo[0]) * (hi[2] - lo[2])
-                    if area > 600 * 600 or (len(parts) > 1 and area > 150 * 150):
+                    if area > 600 * 600 or (len(parts) > 1 and area > 250 * 250):
                         continue        # (a small zone in two parts - the lecture room's lectern - is one thing)
+                    if "control device" in low and "broken" in low:
+                        name = "Broken control device"
+                    for pat, nm in CHECK_NAMES:
+                        if pat in low and (name in ("Something to check", "Nothing much") or pat.startswith("flames")):
+                            name = nm
+                            break
                     if "system disk" in low:
                         name = "Lectern"    # (the lecture room's: "Evac. Drill Path: Locked")
+                    name = ZONE_NAMES.get((self.base_code, index), name)
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
                                              outline=_footprint(zones[index]), puzzle=puzzle))
                     used.add(index)
+        # (where to stand to use a typewriter whose own side is blocked: the Main Hall's has a
+        # counter in front of it - A reaches it from its right-hand end, facing west)
+        for th in self.things:
+            st = TYPEWRITER_SPOTS.get(self.base_code)
+            if th.name == "Typewriter" and st and math.hypot(th.pos[0] - st[0], th.pos[2] - st[1]) < 150:
+                th.spot = ((st[2] * 10.0, st[3] * 10.0), st[4])
         # Places the game has no zone of their own for (all in one big zone, the script working out
         # which from where you stand): the lecture room's sixteen seats with switches on their
         # desks, numbered 0 to F as on the Microfilm Image (front row, nearest the screen: 0 1 2 3)

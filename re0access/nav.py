@@ -83,6 +83,7 @@ class NavMesh:
                 continue
             self._lay_floor(tri)
         self.walls = []             # (x1, z1, x2, z2, low, high) seen from above
+        self.risers = 0             # taller step fronts let through (see _raise_wall)
         self.blocked = set()        # (c, r, i)
         self.near = set()           # free squares that are close to a wall
         for tri in walls:
@@ -156,8 +157,38 @@ class NavMesh:
         if high - low <= RISER:
             return      # (the front of a stair step: stepped over, not a wall to keep off - the
                         # Large Hall's steep stairs down to the Main Hall door had no way down)
+        if high - low <= STEP + 200.0 and self._step_front(x1, z1, x2, z2, low, high):
+            self.risers += 1
+            return      # (a taller step, with a tread at its foot and one at its top: the Training
+                        # Room's stairs up to the control room have 30 cm steps)
         self.block_segment(x1, z1, x2, z2, self.clearance, low, high)
         self.block_segment(x1, z1, x2, z2, COMFORT, low, high, into=self.near)
+
+    def _step_front(self, x1, z1, x2, z2, low, high, tol=60.0):
+        """True if ground lies at the wall's top on one side and, no more than a step lower, at
+        its foot on the other, all along it: the front of a step, not a kerb or a ledge. (The
+        wall can go on below the ground: the bottom step's front.)"""
+        length = math.hypot(x2 - x1, z2 - z1)
+        if length < 1.0:
+            return False
+        nx, nz = -(z2 - z1) / length, (x2 - x1) / length
+        n = max(1, int(length // CELL))
+        for k in range(n + 1):
+            t = (k + 0.5) / (n + 1)
+            px, pz = x1 + (x2 - x1) * t, z1 + (z2 - z1) * t
+            sides = []
+            for sgn in (1, -1):
+                found = set()
+                for d in (0.5 * CELL, 1.0 * CELL, 1.5 * CELL):
+                    for h in self.heights.get(self.cell(px + sgn * nx * d, pz + sgn * nz * d), ()):
+                        if low - tol <= h <= high - 100.0 and h >= high - STEP - tol:
+                            found.add("low")
+                        if abs(h - high) <= tol:
+                            found.add("high")
+                sides.append(found)
+            if not (("low" in sides[0] and "high" in sides[1]) or ("high" in sides[0] and "low" in sides[1])):
+                return False
+        return True
 
     def block_segment(self, x1, z1, x2, z2, radius, low, high, into=None):
         into = self.blocked if into is None else into
