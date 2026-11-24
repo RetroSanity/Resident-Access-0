@@ -170,8 +170,15 @@ class App(RoomList, ModMenu):
             self.read_file_page(batch, reading)
             return
         self.reader_file = None
+        # (a line with a name in it - "<P_BI>'s shoulders" - has the game lay the name out on its
+        # own as well: said in the line, not again after it)
+        named = {"Billy" for _c, _h, r in batch if "<P_BI>" in r} | {"Rebecca" for _c, _h, r in batch if "<P_RE>" in r}
         for caller, holder, raw in batch:
             self.note_text(T.clean(raw), now)
+            if "Set number" in raw:
+                seen = self.text_seen.get(raw)
+                if seen is None or now - seen >= self.GONE:
+                    self.dial_hint = now    # (the combination dials put up: look for them)
             last = self.text_seen.get(raw)
             self.text_seen[raw] = now
             if last is not None and now - last < self.GONE:
@@ -185,7 +192,7 @@ class App(RoomList, ModMenu):
                 continue            # (":Change number", ":All": the buttons, said with the number)
             if self.note_text(words, now):
                 continue            # (the mod is speaking its own row of the Option menu)
-            if len(words) < 2 or words in fresh:
+            if len(words) < 2 or words in fresh or words in named:
                 continue
             if len(words) > 60:
                 # (a file's pages are laid out again as you turn them, the last one with the
@@ -248,6 +255,7 @@ class App(RoomList, ModMenu):
             self.question_at = -99.0        # (that question is over)
             if self.choice_was == 0 and "lever" in getattr(self, "question_text", "").lower():
                 self.start_holding()
+            self.panel_answer(getattr(self, "question_text", "").lower(), self.choice_was)
         if cur is not None:
             self.game.save_row()        # (finds the save list ahead of time, for the typewriter)
         was = getattr(self, "choice_was", None)
@@ -260,6 +268,47 @@ class App(RoomList, ModMenu):
         if cur < len(words):
             # (the first one comes after the question itself)
             self.say(words[cur], interrupt=was is not None)
+
+    # The Torture Room's power supply panel: five switches, each Up adds its volts to the meter
+    # and Down takes them away; the meter has to read 70. (The small gauge over each switch shows
+    # how many volts it is worth: 30, 20, 40, 10, 50 - up, up, down, up, up makes 70.)
+    PANEL_VOLTS = [30, 20, 40, 10, 50]
+    ORDINALS = ["first", "second", "third", "fourth", "fifth"]
+
+    def panel_answer(self, q, answer):
+        """A question at the panel answered: say what it did to the meter."""
+        if "adjust the panel" in q:
+            if answer == 0:
+                self.panel_volts = 0
+                self.say("Power panel. The meter reads 0 and has to read 70. Press A, then flip the "
+                         "switches 1 to 5 in turn, Up adds, Down takes away: switch 1 is worth 30 volts, "
+                         "2 is 20, 3 is 40, 4 is 10, 5 is 50.", interrupt=False)
+            return
+        m = re.search(r"flip the (first|second|third|fourth|fifth) switch", q)
+        if not m:
+            return
+        n = self.ORDINALS.index(m.group(1))
+        if n == 0 or getattr(self, "panel_volts", None) is None:
+            self.panel_volts = 0
+        if answer == 2:
+            self.panel_volts = None
+            self.say("Cancelled.", interrupt=False)
+            return
+        if answer not in (0, 1):
+            return
+        # (the meter stops at 0 and at 100: down from 0 leaves it at 0, and the next switch up
+        # counts from there - switch 1 down then 2 up reads 20)
+        self.panel_volts = max(0, min(100, self.panel_volts + self.PANEL_VOLTS[n] * (1 if answer == 0 else -1)))
+        v = self.panel_volts
+        words = "Switch %d %s. %d volts." % (n + 1, "up" if answer == 0 else "down", v)
+        if n == 4:
+            words += " That's 70." if v == 70 else " Not 70: try again."
+            if v == 70:
+                self.story_moves = ("Rebecca", 0x5B)    # (she falls into the chasm under the Storage Room)
+            self.panel_volts = None
+        else:
+            words += " Need 70."
+        self.say(words, interrupt=False)
 
     def poll_clock(self):
         """Setting the clock's hands: say the time it shows when asked which hand to turn, and
@@ -520,6 +569,40 @@ class App(RoomList, ModMenu):
             st["target"] = target
             self.say("Target %d." % target)
 
+    # -- the combination dials (the Duralumin Case) ------------------------------------------
+    DIAL_NAMES = ("Left", "Middle", "Right")
+
+    def poll_dial(self):
+        hint = getattr(self, "dial_hint", None)
+        now = time.monotonic()
+        st = getattr(self, "dial", None)
+        look = hint is not None and now - hint < 30.0
+        got = self.game.dial_lock(look=look)
+        if got is None:
+            if st and now - st["seen"] > 3.0:
+                self.dial = None
+            return
+        pick, nums = got
+        if st is None or (hint is not None and hint > st["opened"]):
+            if not look and st is None:
+                return          # (left over from before: wait for the dials to be put up again)
+            self.dial = {"pick": pick, "nums": list(nums), "seen": now, "opened": hint or now}
+            self.say("Combination dials: %s. On the %s dial. Up and down change the number, left and "
+                     "right pick the dial, A to try it." % (" ".join(map(str, nums)), self.DIAL_NAMES[pick].lower()),
+                     interrupt=False)
+            return
+        st["seen"] = now
+        if pick != st["pick"]:
+            st["pick"] = pick
+            self.say("%s dial, %d" % (self.DIAL_NAMES[pick], nums[pick]), interrupt=True)
+        if nums != st["nums"]:
+            changed = [k for k in range(3) if nums[k] != st["nums"][k]]
+            st["nums"] = list(nums)
+            if changed == [pick]:
+                self.say(str(nums[pick]), interrupt=True)
+            else:
+                self.say(" ".join(map(str, nums)), interrupt=True)
+
     def brake_words(self, st, key=None):
         total, target, n = st["sum"], st["target"], st["count"]
         if key is not None:
@@ -734,6 +817,7 @@ class App(RoomList, ModMenu):
                 self.poll_save()
                 self.poll_load_choice()
                 self.poll_brake()
+                self.poll_dial()
             except NotReady:
                 pass
             except Exception:

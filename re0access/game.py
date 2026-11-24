@@ -70,6 +70,8 @@ VT_FILE = 0x00CDA970          # uGUIFile, a file read as you pick it up ([sSubMe
 VT_INGAME_MSG = 0x00CDE2E8     # uGUIInGameMessage, the message window: +0x284 4 while a question's answers
                               # are up, +0x2A0 the answer picked (0 Yes, 1 No, 2 Use)
 VT_DIALOG = 0x00CDA380        # uGUIDialog, the Start menu's "Quit?" question: +0x268 0 Yes, 1 No
+VT_DIAL = 0x00CE2870          # the combination dials (the Duralumin Case): +0x264 the dial picked (0 on the
+                               # left), +0x27C, +0x280, +0x284 the numbers on them
 VT_BRAKE = 0x00CD9698         # uGUIBrakePuzzle, the number pad behind the brake's card reader (up while it is)
 VT_MULTINUM = 0x00CE3820      # cGUIObjMultiNumTexture, a number drawn on screen: +0x114 its value; the
                               # pad's target and total are the two with 3 at +0x50
@@ -96,7 +98,7 @@ ENEMY_VTS = {0xCBDCD8: 0x10, 0xCC4F28: 0x11, 0xCC50A0: 0x12, 0xCC5218: 0x14, 0xC
              0xCC3248: 0x46, 0xCC3710: 0x47, 0xCC5DD8: 0x50, 0xCC5F50: 0x51, 0xCC60C8: 0x5A, 0xCC6240: 0x5B,
              0xCC63B8: 0x6A, 0xCC6530: 0x6B}
 ZOMBIES = {0x10, 0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x50, 0x51, 0x5A, 0x5B, 0x6A, 0x6B}
-ENEMY_NAMES = {0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
+ENEMY_NAMES = {0x34: "Spider", 0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
 
 
 def enemy_name(kind):
@@ -695,6 +697,26 @@ class Game:
                 if not nums:
                     return None
             return self.mem.u32(nums[0] + 0x114), self.mem.u32(nums[1] + 0x114)
+        except NotReady:
+            return None
+
+    def dial_lock(self, look=False):
+        """(the dial picked from 0, [the numbers]) on the combination dials, or None. look: search
+        for them (slow, in the background) when they are not known."""
+        try:
+            dp = getattr(self, "_dial", None)
+            if not dp or self.mem.u32(dp) != VT_DIAL:
+                self._dial = None
+                if not look:
+                    return None
+                dp = self._dial = self.find_cached(VT_DIAL, "_dial_tried", 2.0)
+                if not dp:
+                    return None
+            pick = self.mem.u32(dp + 0x264)
+            nums = [self.mem.u32(dp + 0x27C + 4 * k) for k in range(3)]
+            if pick > 2 or any(n > 9 for n in nums):
+                return None
+            return pick, nums
         except NotReady:
             return None
 
