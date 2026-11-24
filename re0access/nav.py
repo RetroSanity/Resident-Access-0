@@ -18,7 +18,8 @@ STEP = 320.0        # how much the ground may rise between neighbouring squares 
 RISER = 260.0       # a wall no taller than this is a stair step's front (stepped up, not walked round)
 HEADROOM = (400.0, 1800.0)   # ground with other ground this much over it is under a staircase: no room to stand
 HEAD_LOG = False
-HEADROOM_ON = False     # set per room (roomlist.LOW_HEAD_ROOMS): tried everywhere, it cut the Lecture Room's back row off
+HEADROOM_ON = False     # set per room (roomlist.LOW_HEAD_ROOMS): tried everywhere, it cut the Lecture Room's back row off.
+                        # "sloped": only under a sloping staircase; "any": under any ground (stairs made of flat steps)
 BODY = (250.0, 1000.0)   # the part of the body walls are checked against, above the ground
 
 
@@ -98,7 +99,8 @@ class NavMesh:
             if len(hs) < 2:
                 continue
             for i, h in enumerate(hs):
-                if any(lo < h2 - h < hi and (c, r, j) in self.sloped for j, h2 in enumerate(hs)):
+                if any(lo < h2 - h < hi and (HEADROOM_ON == "any" or (c, r, j) in self.sloped)
+                       for j, h2 in enumerate(hs)):
                     if (c, r, i) not in self.blocked:
                         self.blocked.add((c, r, i))
                         self.low_head += 1

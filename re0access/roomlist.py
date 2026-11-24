@@ -41,8 +41,9 @@ def metres(cm):
 
 
 # Rooms where the ground under a staircase is no way through (the walk went in under the steps and
-# got stuck): the Cavernous Area, to the Training Room door.
-LOW_HEAD_ROOMS = {"dm09"}
+# got stuck): the Cavernous Area, to the Training Room door; the Training Room, whose stairs up to
+# the control room are flat steps (a way started on them went down under them first).
+LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any"}
 
 
 class RoomList(PushMixin):
@@ -123,7 +124,7 @@ class RoomList(PushMixin):
             return None
         code, n = scene_code(self.scene)
         name = "%s%02x" % (code, n)
-        _nav.HEADROOM_ON = name in LOW_HEAD_ROOMS
+        _nav.HEADROOM_ON = LOW_HEAD_ROOMS.get(name, False)
 
         def scene_of(stage, room):
             if stage >= len(STAGE_FIRST):
@@ -1341,6 +1342,20 @@ class RoomList(PushMixin):
             # looks at is on it)
             x, y, z = t.pos
             r = self.ITEM_REACH
+            fl = None
+            try:
+                # (the floor you stand on at the end of the way: free ground there, not over the item)
+                ex, ez = way[-1] if way else (p[0] * MM, p[2] * MM)
+                m = self.mesh
+                c, r_ = m.cell(ex, ez)
+                hs = [h for i, h in enumerate(m.heights.get((c, r_), ())) if (c, r_, i) not in m.blocked
+                      and h <= y * MM + 100.0]
+                fl = max(hs) if hs else (p[1] * MM if not way else None)
+            except Exception:
+                logging.exception("item floor")
+            if fl is not None and y * MM - fl > 400.0:
+                r = self.TABLE_REACH    # (up on a table: the near edge is as near as you get - the
+                                        # Training Room's ammo on the gun bench, at the back of it)
             t.outline = [(x - r, z - r), (x + r, z - r), (x + r, z + r), (x - r, z + r)]
             box = t.box = ((x - r, y, z - r), (x + r, y, z + r))
         if getattr(t, "stand", False) and way is not None:
@@ -1605,6 +1620,7 @@ class RoomList(PushMixin):
         return math.atan2(vx, vz)
 
     ITEM_REACH = 12.0   # (cm: how near an item the point A looks at has to be)
+    TABLE_REACH = 35.0  # (cm: the same for an item up on a table or a shelf)
     REACH = 520.0       # (mm: the game's A looks for a thing to check about this far in front of you)
 
     def outline_of(self, t):
