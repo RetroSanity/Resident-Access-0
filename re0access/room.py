@@ -342,6 +342,8 @@ class RoomData:
                             break
                     if "system disk" in low:
                         name = "Lectern"    # (the lecture room's: "Evac. Drill Path: Locked")
+                    if "the piano" in low and "piano" not in name.lower():
+                        name = "Piano"      # (the Piano Bar's: "No need to play" once it is played)
                     name = ZONE_NAMES.get((self.base_code, index), name)
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
                                              outline=_footprint(zones[index]), puzzle=puzzle))

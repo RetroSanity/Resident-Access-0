@@ -54,6 +54,8 @@ def clean(raw):
 
     def tag(m):
         t = m.group(0)
+        if t.upper() in ("<P_BI>", "<P_RE>"):
+            return "Billy" if t.upper() == "<P_BI>" else "Rebecca"      # (the partner's name, in a line)
         n = icon_name(t)
         if n:
             return " " + n + " "

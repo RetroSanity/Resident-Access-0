@@ -27,6 +27,48 @@ VERBS = {"pertaining", "belonging", "concerning", "regarding", "is", "are", "was
 PREPOSITIONS = {"of", "on", "in", "for", "from", "against", "over", "at", "to", "by", "through", "under"}
 # Messages that need a hand-picked name: (pattern in the lower-case first sentence, name).
 FIXED = [
+    (r"can't open the locker", "Broken locker"),
+    (r"monitor isn't displaying", "Monitor"),
+    (r"^the screen isn't displaying", "Screen"),
+    (r"used as a message board", "Message board"),
+    (r"blocked by a cloud of super-heated steam", "Steam blocking the way"),
+    (r"stairs leading up, but they've collapsed", "Collapsed stairs"),
+    (r"too high to jump down", "Drop, too high to jump down"),
+    (r"large hole gapes", "Large hole"),
+    (r"filing cabinet is in a state", "Filing cabinet"),
+    (r"chair where that monster was sitting", "Slimy chair"),
+    (r"^the painting depicts|^it's a painting of|^a large painting hangs", "Painting"),
+    (r"still-life painting", "Still-life painting"),
+    (r"grandfather clock", "Grandfather clock"),
+    (r"^six souls, imprisoned", "Inscription"),
+    (r"^photographs of various people", "Photographs"),
+    (r"monitors currently display", "Monitors"),
+    (r"valve for controlling the flow", "Water valve"),
+    (r"^the screen displays", "Screen"),
+    (r"shirt from a worker's uniform", "Worker's shirt"),
+    (r"pouring spout", "Chemical pouring spout"),
+    (r"through the rushing flow of water", "Rushing water"),
+    (r"selection of spices", "Spices"),
+    (r"simple elevator", "Service lift"),
+    (r"machine for winding the chain", "Chain winding machine"),
+    (r"sewage flows from the pipe", "Sewage pipe"),
+    (r"water seeps through the joints", "Leaking pipe"),
+    (r"industrial-sized refrigerator", "Refrigerator"),
+    (r"still raining as hard as ever", "Window"),
+    (r"strange odor lingers around the cage", "Cage"),
+    (r"diagram of the train's layout", "Train diagram"),
+    (r"passenger cabin below the crack", "Crack in the floor"),
+    (r"picture of a mother holding a baby", "Picture"),
+    (r"blackboard lists", "Blackboard"),
+    (r"device for injecting gas", "Gas injector"),
+    (r"variety of expensive", "Art supplies"),
+    (r"despite a few cracks, this pot", "Pot"),
+    (r"thing\W* on the operating table", "Operating table"),
+    (r"^biology, sociology", "Bookshelf"),
+    (r"photo of a building under construction", "Photo"),
+    (r"tools and measuring equipment", "Tools"),
+    (r"controls regulate the supply", "Water controls"),
+    (r"since this one croaked", "Dead body"),
     (r"release lever", "Hookshot release"),
     (r"hand-operated brake", "Brake, magnetic card reader"),
     (r"hookshot is attached to the wall", "Hookshot on the wall"),
@@ -51,6 +93,7 @@ FIXED = [
     (r"your view is blocked", "Thick trees"),
     (r"too dark to see", "Dark corner"),
     (r"projector isn't displaying", "Projector screen"),
+    (r"some sort of control device", "Control device"),
     (r"from here you've got a good view", "Window"),
     (r"inside the cardboard box", "Cardboard box"),
     (r"lines carved into the relief", "Relief carving"),
@@ -107,6 +150,11 @@ def short_name(text):
     """A short name for a thing, from the message the game shows when you
     check it, or None when the message is not about a thing at all."""
     t = re.sub(r"\[[0-9A-F]+\]|\s*/\s*", " ", text).strip()
+    m = re.match(r"^-\s*([A-Za-z][A-Za-z '&.]{2,40}?)\s*-", t)
+    if m:
+        # ("-Power Supply Control Panel- This panel looks like...": a title, the thing's name)
+        w = m.group(1).strip()
+        return w[0] + w[1:].lower()
     if t.startswith('"') and not t.lower().startswith('"caution'):
         return quoted_name(t)
     t = re.split(r"(?<=[.!?])\s", t)[0].strip()

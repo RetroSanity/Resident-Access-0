@@ -295,6 +295,11 @@ class RoomList(PushMixin):
                     if kind == "item" and self.is_taken(t):
                         continue
                     out.append(t)
+                if kind in ("puzzle", "check"):
+                    # (the place a key item was got from, named after it, once someone has it:
+                    # the Piano Bar's Battery, behind the bar)
+                    got = self.carried_key_names()
+                    out = [t for t in out if t.name not in got]
                 if kind == "puzzle":
                     pt = self.push_thing()
                     if pt is not None:
@@ -322,6 +327,22 @@ class RoomList(PushMixin):
         if p:
             out.sort(key=lambda t: (abs(t.pos[1] - p[1]) > 150, math.hypot(t.pos[0] - p[0], t.pos[2] - p[2])))
         return out
+
+    def carried_key_names(self):
+        names = set()
+        try:
+            gd = self.game_dir()
+            from . import gmd
+            labels = gmd.archive(gd).get("message_item_name_eng", ({}, []))[0] if gd else {}
+            for who, _ in self.game.characters():
+                for i, _n in self.game.inventory(who):
+                    if i > 0 and i in self.game.key_items:
+                        nm = R.item_name(labels, i)
+                        if nm:
+                            names.add(nm)
+        except Exception:
+            logging.exception("carried key items")
+        return names
 
     def check_of(self, item):
         """The thing to check next to the item that names it (the hookshot fixed to the wall: it
@@ -381,8 +402,34 @@ class RoomList(PushMixin):
             from . import gmd
             labels = gmd.archive(gd).get("message_item_name_eng", ({}, []))[0] if gd else {}
             out = []
+            # (an item with a record for each difficulty - the Piano Bar's Battery - has two at
+            # one place; picked up, one goes and the other stays: once fewer are left than there
+            # were, the rest are not really there)
+            groups = {}
+            for k, item, amount, put, pos in recs:
+                if amount and pos != (0.0, 0.0, 0.0):
+                    key = (self.scene, item, round(pos[0] / 25.0), round(pos[2] / 25.0))
+                    groups[key] = groups.get(key, 0) + 1
+            # (a key item has one record for it as a key item and another for it as an item: a
+            # key item someone carries is not lying here too - the Piano Bar's Battery, got by
+            # Rebecca, kept both records)
+            carried = set()
+            try:
+                for who, _ in self.game.characters():
+                    carried.update(i for i, _n in self.game.inventory(who) if i > 0)
+            except Exception:
+                logging.exception("carried")
+            twins = self.__dict__.setdefault("_twins", {})
+            for key, n in groups.items():
+                if n > 1:
+                    twins[key] = max(n, twins.get(key, 0))
             for k, item, amount, put, pos in recs:
                 if amount == 0 or pos == (0.0, 0.0, 0.0):
+                    continue
+                key = (self.scene, item, round(pos[0] / 25.0), round(pos[2] / 25.0))
+                if key in twins and groups.get(key, 0) < twins[key]:
+                    continue
+                if item in carried and item in self.game.key_items:
                     continue
                 name = R.item_name(labels, item) or "Item %d" % item
                 out.append(R.Thing("item", name, pos, item=item, amount=amount, index=k))

@@ -544,6 +544,8 @@ class Game:
             out.append((obj, kind, (x, y, z), hp))
         return out
 
+    key_items = set()       # (items with a key item's record: there is one of each)
+
     def placed_items(self, scene):
         """[(index, item, amount, (x, y, z))] of the items lying in a room now (dropped ones too)."""
         try:
@@ -561,6 +563,8 @@ class Game:
             now = struct.unpack_from("<i", data, o + 0x44)[0]
             x, y, z = struct.unpack_from("<3f", data, o + 0x28)
             out.append((k, item, now, put, (x, y, z)))
+            if kind == 0x78:
+                self.key_items.add(item)
         return out
 
     def room_offset(self):

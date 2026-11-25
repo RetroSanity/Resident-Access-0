@@ -55,6 +55,45 @@ PUZZLES = {
         "off": "The bookcase has gone the wrong way. Leave the room and come back to put it back.",
         "push_words": "Hold forward to push the bookcase %s.",
     },
+    # (the chess room: the board is the floor, the pieces are big things to push - push any piece
+    # but the white king (white, with the cross on top: the same size as the black king), or the
+    # king the wrong way, and gas comes out. The king starts in the middle of the row of three,
+    # 678,351; a push moves a piece one square, about 51 cm. South is towards the exit door (+z),
+    # east to the right facing it (+x): three south, to the first square with room beside it to
+    # push from, one east, two north till it stops against the piece it started beside, and the
+    # board on the desk slides aside. (Pushing the piece east of it south lets out the gas.))
+    "sh12": {
+        "name": "White king",
+        "pieces": True,
+        "start": (677.8, 351.0),
+        "step": 43.0,           # (one push moves a piece about 43 cm, then a pause)
+        "reach": 75.0,
+        "stages": [
+            # (south till there is room on its left to push it from - the black pawn is beside it
+            # till then: about four pushes)
+            {"axis": 2, "sign": 1, "to": 515.0, "heading": 0.0, "over": 70.0,
+             "way": "south, towards the door",
+             "done": "Stop. Next, push it east, to the right as you face the door, till it stops "
+                     "against the cabinet. Auto walk to the white king takes you round to the side "
+                     "to push it from."},
+            # (east till the cabinet stops it, in line with the white piece it started beside)
+            {"axis": 0, "sign": 1, "to": 729.5, "heading": math.pi / 2, "reach": 70.0, "lane": 70.0,
+             "until_stops": True,
+             "way": "east, to the right as you face the door, till it stops",
+             "done": "Stop. Last, push it north, back towards the other pieces, till it stops against "
+                     "the white piece. Auto walk to the white king takes you round to the side to push "
+                     "it from."},
+            # (north till that piece stops it)
+            {"axis": 2, "sign": -1, "to": 402.0, "heading": math.pi, "reach": 72.0, "until_stops": True,
+             "way": "north, back towards the other pieces, till it stops",
+             "done": "Stop. The white king is in place. The chessboard on the desk should slide aside: "
+                     "the Book of Evil is in the desk."},
+        ],
+        "done_words": "in place, the desk is open",
+        "off": "The white king has gone the wrong way. Leave the room and come back to put the board "
+               "back. Do not push any other piece: that lets out poison gas.",
+        "push_words": "Hold forward to push the white king %s. Only push the king.",
+    },
 }
 
 
@@ -64,17 +103,64 @@ class PushMixin:
         rd = self.room_data
         return PUZZLES.get(rd.base_code) if rd else None
 
-    def push_obj_pos(self):
-        """(x, y, z) cm in the room of the thing to push, or None."""
+    def push_objs(self):
+        """[(address, (x, y, z) cm in the room)] of the things to push here."""
+        out = []
         try:
             off = self.game.room_offset() or (0.0, 0.0, 0.0)
             for vt, obj in self.game.units():
                 if vt == VT_OBSTACLE:
                     x, y, z = struct.unpack("<3f", self.mem.read(obj + 0x40, 12))
-                    return (x - off[0], y - off[1], z - off[2])
+                    out.append((obj, (x - off[0], y - off[1], z - off[2])))
         except Exception:
+            return []
+        return out
+
+    def push_obj_pos(self):
+        """(x, y, z) cm in the room of the thing to push, or None."""
+        objs = self.push_objs()
+        if not objs:
             return None
-        return None
+        pz = self.push_puzzle()
+        if not pz or not pz.get("pieces"):
+            return objs[0][1]
+        return self.push_piece(pz, objs)
+
+    def _push_path(self, pz):
+        pts = [tuple(pz["start"])]
+        for s in pz["stages"]:
+            x, z = pts[-1]
+            pts.append((s["to"], z) if s["axis"] == 0 else (x, s["to"]))
+        return pts
+
+    def push_piece(self, pz, objs):
+        """Of the pieces on the board, the one to push (the white king): the one seen as it before
+        while it is still there, else the one on its way from where it starts to where it goes."""
+        ground = [(a, p) for a, p in objs if abs(p[1]) < 40.0]
+        if not ground:
+            return None
+        path = self._push_path(pz)
+
+        def gap(p):
+            best = 1e9
+            for (ax, az), (bx, bz) in zip(path, path[1:]):
+                dx, dz = bx - ax, bz - az
+                ln = dx * dx + dz * dz
+                k = 0.0 if ln == 0 else max(0.0, min(1.0, ((p[0] - ax) * dx + (p[2] - az) * dz) / ln))
+                best = min(best, math.hypot(p[0] - ax - k * dx, p[2] - az - k * dz))
+            return best
+        # (on its way there is only ever the king - every other piece is a square off it; off the
+        # way, the one seen as it before, while that is still in the room)
+        a, p = min(ground, key=lambda ap: gap(ap[1]))
+        if gap(p) <= 25.0:
+            self.push_piece_addr = (self.scene, a)
+            return p
+        mine = getattr(self, "push_piece_addr", None)
+        if mine and mine[0] == self.scene:
+            for a2, p2 in ground:
+                if a2 == mine[1]:
+                    return p2
+        return p
 
     def push_thing(self):
         pz = self.push_puzzle()
@@ -97,23 +183,34 @@ class PushMixin:
         st = pz["stages"]
         cur = [pz["start"][0], pz["start"][1]]          # (x, z) where each stage starts
         v = (pos[0], pos[2])
+        found = None
         for i, s in enumerate(st):
+            # (on this stage's stretch of the way: in line with it, not past either end; where two
+            # stretches meet, the later one - the king goes back up the way it came down)
             ax = 0 if s["axis"] == 0 else 1
             other = 1 - ax
             left = (s["to"] - v[ax]) * s["sign"]
             span = (s["to"] - cur[ax]) * s["sign"]
             last = i == len(st) - 1
-            if not last and abs(left) <= 12.0:
-                cur[ax] = s["to"]                        # (this stage done: it moves the other way now)
-                continue
-            if abs(v[other] - cur[other]) > 12.0:
-                return None, 0                           # (off to the side of the way)
-            if left < (-50.0 if last else -12.0) or left > span + 12.0:
-                return None, 0                           # (past the place, or pushed back)
-            if left > 12.0:
-                return i, max(1, int(round(left / pz["step"])))
+            lane = s.get("lane", 12.0)
+            over = s.get("over", 50.0 if last or s.get("until_stops") else 12.0)
+            if i:
+                # (only once the stage before is done: past its place, or as good as)
+                ps_ = st[i - 1]
+                pv = v[0 if ps_["axis"] == 0 else 1]
+                if (ps_["to"] - pv) * ps_["sign"] > (15.0 if ps_.get("until_stops") else 12.0):
+                    cur[ax] = s["to"]
+                    continue
+            if abs(v[other] - cur[other]) <= lane and -over <= left <= span + 12.0:
+                found = (i, left)
             cur[ax] = s["to"]
-        return len(st), 0
+        self._push_found = found
+        if found is None:
+            return None, 0                               # (off the way, or pushed back past it)
+        i, left = found
+        if left > 12.0:
+            return i, max(1, int(round(left / pz["step"])))
+        return (len(st), 0) if i == len(st) - 1 else (i + 1, max(1, int(round(abs(st[i + 1]["to"] - (v[0] if st[i + 1]["axis"] == 0 else v[1])) / pz["step"]))))
 
     def push_words(self, t):
         """What is said after the table's name in the list."""
@@ -134,6 +231,12 @@ class PushMixin:
         pz = self.push_puzzle()
         s = pz["stages"][i]
         x, z = pos[0], pos[2]
+        if pz.get("pieces"):
+            # (straight behind it, square on: a piece moves the way it is pushed)
+            r = s.get("reach", pz.get("reach", 85.0))
+            if s["axis"] == 0:
+                return (x - s["sign"] * r, z), s["heading"], False
+            return (x, z - s["sign"] * r), s["heading"], False
         if s["axis"] == 0:
             return (x - s["sign"] * pz.get("reach", 85.0), z), s["heading"], False
         # (behind it along z: from the corner it blocks, climbed over to while it is still in the way)
@@ -312,6 +415,13 @@ class PushMixin:
         """The thing as a circle (x, y, z mm, radius) for ways to keep round."""
         if not self.push_puzzle():
             return ()
+        pz = self.push_puzzle()
+        if pz.get("pieces"):
+            # (every piece on the board, to keep well clear of: walking into one pushes it)
+            # (the king a little less, so the side to push it from is not walled off)
+            king = self.push_obj_pos()
+            return tuple((p[0] * MM, p[1] * MM, p[2] * MM, 470.0)
+                         for _a, p in self.push_objs() if abs(p[1]) < 40.0)
         pos = self.push_obj_pos()
         if not pos:
             return ()
@@ -503,50 +613,84 @@ class PushMixin:
             self.push_seen = None
             return
         now = time.monotonic()
+        ps = getattr(self, "push_seen", None)
+        if getattr(self, "push_hold", None):
+            # (stopped on its square: the stick held back till the player lets go of it, so the
+            # push does not go on past it)
+            try:
+                real = self.link.real()
+                still = abs(real["lx"]) < 9000 and abs(real["ly"]) < 9000 and not (real["buttons"] & 0x000F)
+            except Exception:
+                still = True
+            if (still and now >= self.push_hold) or now >= self.push_hold + 8.0:
+                self.push_hold = None
+                self.link.block_stick = False
+                self.link.block &= ~(L.UP | L.DOWN | L.LEFT | L.RIGHT)
+        moving = bool(ps and ps.get("moving"))
         if now < getattr(self, "push_next_look", 0.0):
             return
-        self.push_next_look = now + 0.15
+        self.push_next_look = now + (0.02 if moving else 0.15)
         pos = self.push_obj_pos()
         if not pos:
             return
-        key = (round(pos[0]), round(pos[2]))
-        ps = getattr(self, "push_seen", None)
+        key = (round(pos[0], 1), round(pos[2], 1))
+        st = pz["stages"]
+        i, _left = self.push_stage(pos)
         if not ps or ps["scene"] != self.scene:
-            self.push_seen = {"scene": self.scene, "key": key, "at": now, "moving": False, "said": key}
+            self.push_seen = {"scene": self.scene, "key": key, "at": now, "moving": False,
+                              "stage": i, "n": None, "pos": pos, "t": now}
             return
-        if key != ps["key"]:
-            ps["key"] = key
-            ps["at"] = now
-            if not ps["moving"]:
-                ps["moving"] = True
-            i, _left = self.push_stage(pos)
-            if i is not None and i >= len(pz["stages"]):
-                # (there: hold the controller back a moment, so the push after it does not start)
-                self.link.block_stick = True
-                self.link.block |= L.UP | L.DOWN | L.LEFT | L.RIGHT
-                self.push_unblock_at = now + 1.2
-            return
-        if getattr(self, "push_unblock_at", 0.0) and now >= self.push_unblock_at:
-            self.push_unblock_at = 0.0
-            self.link.block_stick = False
-            self.link.block &= ~(L.UP | L.DOWN | L.LEFT | L.RIGHT)
-        if ps["moving"] and now - ps["at"] > 0.35:
-            ps["moving"] = False
-            if key == ps["said"]:
-                return
-            ps["said"] = key
-            i, left = self.push_stage(pos)
-            if i is None:
-                self.say(pz["off"], interrupt=True)
-            elif i >= len(pz["stages"]):
-                self.say(pz["stages"][-1]["done"], interrupt=True)
-            else:
-                s = pz["stages"][i]
-                prev_done = i > 0 and self._push_last_stage == i - 1
-                if prev_done:
-                    self.say(pz["stages"][i - 1]["done"], interrupt=True)
+        if key == ps["key"]:
+            k0 = ps.get("stage")
+            # (a push pauses between pushes for most of a second: stopped against something only
+            # once it has stayed still longer than that)
+            wait = 1.2 if k0 is not None and k0 < len(st) and st[k0].get("until_stops") else 0.35
+            if ps["moving"] and now - ps["at"] > wait:
+                ps["moving"] = False
+                if i is None:
+                    if ps.get("off_said") != key:
+                        ps["off_said"] = key
+                        self.say(pz["off"], interrupt=True)
                 else:
-                    self.say("%d more." % left if left > 1 else "1 more.", interrupt=True)
-            self._push_last_stage = i
+                    k = ps.get("stage")
+                    if k is not None and k < len(st) and st[k].get("until_stops"):
+                        s = st[k]
+                        v = pos[0] if s["axis"] == 0 else pos[2]
+                        if abs((s["to"] - v) * s["sign"]) <= 15.0:
+                            # (stopped against what is in the way: there)
+                            ps["stage"] = k + 1
+                            self.say(s["done"], interrupt=True)
+                            return
+                    ps["stage"] = i         # (in step with where it is, after it stops)
+            return
+        # (moving)
+        dt = max(0.01, now - ps["t"])
+        speed = math.hypot(pos[0] - ps["pos"][0], pos[2] - ps["pos"][2]) / dt
+        starting = not ps["moving"] or now - ps["at"] > 0.3      # (a push starting, after a pause)
+        ps.update(key=key, at=now, moving=True, pos=pos, t=now)
+        k = ps.get("stage")
+        if k is None or k >= len(st):
+            return
+        s = st[k]
+        v = pos[0] if s["axis"] == 0 else pos[2]
+        left_cm = (s["to"] - v) * s["sign"]
+        if s.get("until_stops"):
+            if left_cm <= 15.0:
+                return              # (it stops against what is there by itself: Stop once it has)
+        elif left_cm <= max(1.0, speed * 0.03):
+            # (there - or will be before the next look: hold the stick back now, so it stops on
+            # the square, and Stop)
+            self.link.block_stick = True
+            self.link.block |= L.UP | L.DOWN | L.LEFT | L.RIGHT
+            self.push_hold = now + 0.6
+            ps["stage"] = k + 1
+            ps["n"] = None
+            self.say(s["done"], interrupt=True)
+            return
+        # (as a push starts, what will be left once it is done)
+        n = max(0, int(math.ceil((left_cm - pz["step"] - 3.0) / pz["step"])))
+        if starting and n != ps.get("n"):
+            ps["n"] = n
+            self.say("Last push." if n == 0 else "%d more." % n, interrupt=True)
 
     _push_last_stage = None
