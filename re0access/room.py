@@ -342,6 +342,8 @@ class RoomData:
                             break
                     if "system disk" in low:
                         name = "Lectern"    # (the lecture room's: "Evac. Drill Path: Locked")
+                    if "lift" in low and "not getting any power" in low:
+                        name = "Lift, runs on the Battery"  # (the Training Facility Entrance's: "Use the lift?")
                     if "the piano" in low and "piano" not in name.lower():
                         name = "Piano"      # (the Piano Bar's: "No need to play" once it is played)
                     name = ZONE_NAMES.get((self.base_code, index), name)
