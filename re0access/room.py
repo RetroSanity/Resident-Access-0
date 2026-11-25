@@ -43,6 +43,14 @@ ZONE_NAMES = {
     # there, but you can't see it well from here" - and from on the crate pushed beside it)
     ("sh09", 12): "Pillar, the Discipline Tablet is on top",
     ("sh09", 8): "Top of the pillar",
+    # (the Outside Area by the Laboratory: the circuit breaker beside the elevator)
+    ("ch00", 7): "Circuit breaker for the elevator",
+    ("ch10", 7): "Circuit breaker for the elevator",
+}
+# Zones the script uses but that say nothing to name them by: (room, zone) -> (kind, name).
+EXTRA_ZONES = {
+    # (inside the small building in the Outside Area: stood on, it unlocks the church door)
+    ("ch00", 5): ("check", "Pressure pad, unlocks the Church door"),
 }
 TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
 
@@ -267,6 +275,16 @@ class RoomData:
                             name = "Door" + where
                         if "air vent" in low and "boost" in low:
                             name = "Air vent Billy lifts Rebecca up through," + where
+                        if target is not None and (target == scene_no or room_words(target) == room_words(scene_no)) \
+                                and "ladder" not in low:
+                            # (into another part of this same place: the Outside Area's gate, opened
+                            # from the far side)
+                            name = "Gate" + (", locked from the other side" if "other side" in low else "")
+                        name = ZONE_NAMES.get((self.base_code, index), name)
+                        if any(o.kind == "door" and o.name == name and
+                               math.hypot(o.pos[0] - centre[0], o.pos[2] - centre[2]) < 100.0 for o in self.things):
+                            used.add(index)
+                            continue        # (the other half of the same double door)
                         self.things.append(Thing("door", name, centre, (lo, hi), target=target, zone=index, says=msgs))
                     else:
                         if not msgs:
@@ -354,6 +372,14 @@ class RoomData:
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
                                              outline=_footprint(zones[index]), puzzle=puzzle))
                     used.add(index)
+        for (code_, index), (kind_, name_) in EXTRA_ZONES.items():
+            if code_ == self.base_code and index in zones and index not in used:
+                lo, hi = _box(zones[index])
+                centre = tuple((a + b) / 2.0 for a, b in zip(lo, hi))
+                centre = (centre[0], lo[1], centre[2])
+                self.things.append(Thing(kind_, name_, centre, (lo, hi), zone=index, says=[],
+                                         outline=_footprint(zones[index]), puzzle=True))
+                used.add(index)
         # (where to stand to use a typewriter whose own side is blocked: the Main Hall's has a
         # counter in front of it - A reaches it from its right-hand end, facing west)
         for th in self.things:

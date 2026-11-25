@@ -149,9 +149,14 @@ ROOM_NAMES = {
     "dm04": "Statue Room", "dm05": "Storage Room", "dm06": "Bunk Room B", "dm07": "Bunk Room A",
     "dm08": "Waterfall Room", "dm09": "Cavernous Area", "dm0a": "Training Room", "dm0b": "Torture Room A",
     "dm0c": "Torture Room B",
-    # The Laboratory (the way there from the Observatory Tower, once the tablets have lowered it:
-    # the area outside, with the church; ch10 is the same later)
-    "ch00": "Outside Area, to the Laboratory", "ch10": "Outside Area, to the Laboratory",
+    # The Laboratory (names from Evil Resource's maps, matched by which rooms each room's doors lead
+    # to: the Outside Area the Observatory Tower opens onto, with the church; ch10 and up are the
+    # same rooms later in the story)
+    "ch00": "Outside Area", "ch10": "Outside Area",
+    "ch01": "Church", "ch11": "Church", "ch1f": "Church",
+    "ch0f": "Church Back Room",
+    "ch02": "Church Roof",
+    "ch20": "Elevator Passage",
 }
 
 
