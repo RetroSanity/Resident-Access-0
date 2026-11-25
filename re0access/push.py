@@ -130,6 +130,7 @@ PUZZLES = {
                        "again. Rebecca has to wait out of the way: RB tells her to wait.",
         # (climbed onto from the east side, the side last pushed from, facing the pillar)
         "top_from": (75.0, 0.0, -math.pi / 2),
+        "climb_touch": True,
         "on_top": ("Discipline Tablet", "Top of the pillar", "Pillar, the Discipline Tablet is on top"),
         "done_words": "against the pillar, climb on it for the Discipline Tablet",
         "off": "The crate is off the way the guide knows. Push it back in line with where it was.",
@@ -384,7 +385,7 @@ class PushMixin:
         now = time.monotonic()
         self.push_down = {"ways": ways, "k": 0, "phase": "turn", "y0": p[1], "next": now, "release": 0.0,
                           "until": now + 30.0, "guide": guide, "name": t.name}
-        self.stop_walk("Getting off the table.")
+        self.stop_walk("Getting off the %s." % pz["name"].lower())
         return True
 
     def poll_push_down(self):
@@ -400,7 +401,8 @@ class PushMixin:
         if now > pd["until"] or pd["k"] >= len(pd["ways"]):
             self.push_down = None
             self.walker.hold(set())
-            self.say("Could not get off the table.", interrupt=True)
+            self.say("Could not get off the %s." % ((self.push_puzzle() or {}).get("name", "table").lower()),
+                     interrupt=True)
             return
         obj = self.me()
         p = self.game.local_pos(obj) if obj else None
@@ -511,7 +513,8 @@ class PushMixin:
             p = self.game.local_pos(obj) if obj else None
             self.push_climb = {"step": 0, "y0": p[1] if p else 0.0, "next": now + 0.2, "release": 0.0,
                                "since": now, "presses": 0, "until": now + 35.0}
-            self.stop_walk("Climbing onto the table." if pp.get("top") else "Climbing over the table.")
+            nm = (self.push_puzzle() or {}).get("name", "table").lower()
+            self.stop_walk(("Climbing onto the %s." if pp.get("top") else "Climbing over the %s.") % nm)
             return True
         self.push_plan = None
         pz = self.push_puzzle()
@@ -535,7 +538,8 @@ class PushMixin:
         if now > pc["until"]:
             self.push_climb = None
             self.walker.hold(set())
-            self.say("Could not climb over the table here.", interrupt=True)
+            self.say("Could not climb over the %s here." % ((self.push_puzzle() or {}).get("name", "table").lower()),
+                     interrupt=True)
             return
         if pc["release"]:
             return
@@ -588,7 +592,9 @@ class PushMixin:
                 return
             if pc["presses"] >= 3:
                 self.push_climb = None
-                self.say("Could not climb %s here." % ("onto the table" if want_up else "down"), interrupt=True)
+                logging.info("push climb: gave up, y %.0f from %.0f at %.0f,%.0f", p[1], pc["y0"], p[0], p[2])
+                self.say("Could not climb %s here." % (("onto the %s" % pz["name"].lower()) if want_up else "down"),
+                         interrupt=True)
                 return
             if want_up:
                 # (in line with its middle and square on to it: A only climbs it from there - a
@@ -607,15 +613,20 @@ class PushMixin:
                         return
                 if not turn(prev["heading"], 0.04):
                     return
-                pc["nudged"] = True
+                if not pz.get("climb_touch") or pc.get("nudged") is None:
+                    # (the table: A from where it stands. The crate: a step up against it first -
+                    # A does nothing a hand's width off it)
+                    pc["nudged"] = not pz.get("climb_touch")
             if not pc.get("nudged"):
-                pc["nudged"] = True             # (a step into it, or to the edge, first)
-                pc["release"] = now + 0.3
+                pc["nudged"] = True             # (a step into it, or to the edge, first - up against
+                                                # it: A does nothing a hand's width off the crate)
+                pc["release"] = now + (0.6 if want_up else 0.3)
                 pc["next"] = pc["release"] + 0.2
                 self.walker.hold({"up"})
                 return
             pc["nudged"] = False
             pc["presses"] += 1
+            logging.info("push climb: A at %.0f,%.0f,%.0f heading %.2f", p[0], p[1], p[2], h)
             pc["next"] = now + 2.5
             pc["release"] = now + 0.25
             self.walker.hold({"a"})
@@ -650,7 +661,8 @@ class PushMixin:
                     return
                 self.push_climb = None
                 self.push_plan = None
-                self.say("On the table, facing the %s. Press A." % (top.name if top is not None else "wall"),
+                self.say("On the %s, facing the %s. Press A." % (pz["name"].lower(),
+                                                                  top.name if top is not None else "wall"),
                          interrupt=True)
             return
         if step == 2:
