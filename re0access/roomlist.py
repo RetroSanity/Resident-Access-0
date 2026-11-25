@@ -44,7 +44,9 @@ def metres(cm):
 # Rooms where the ground under a staircase is no way through (the walk went in under the steps and
 # got stuck): the Cavernous Area, to the Training Room door; the Training Room, whose stairs up to
 # the control room are flat steps (a way started on them went down under them first).
-LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any"}
+# The Training Facility Entrance: a slope under the floor by the railing (the way went down it, in
+# under the railing, and Billy walked into the railing) - and the lift was reached from behind.
+LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any", "sh09": "any"}
 
 
 class RoomList(PushMixin):
