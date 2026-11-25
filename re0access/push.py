@@ -94,6 +94,47 @@ PUZZLES = {
                "back. Do not push any other piece: that lets out poison gas.",
         "push_words": "Hold forward to push the white king %s. Only push the king.",
     },
+    # (the Training Facility Entrance: the crate that comes down on the lift once the Battery powers
+    # it. From driving it: it starts at 1396.5,720 in the lift with its back to the wall - climbed
+    # onto from the front (A), walked to the back edge and down behind it (A), it is pushed out
+    # south five times (about 47.5 cm a push) till the railing stops it; west ten times; south
+    # four, beside the pillar; and west once more against it. Climbed onto from the east and facing
+    # the pillar, A reaches the Discipline Tablet on top. Rebecca must wait out of its way - RB.)
+    "sh09": {
+        "name": "Crate",
+        "pieces": True,             # (picked out from the lift's own block beside it by its way)
+        "start": (1396.5, 720.0),
+        "step": 47.5,
+        "reach": 75.0,
+        "stages": [
+            {"axis": 2, "sign": 1, "to": 957.4, "heading": 0.0, "until_stops": True, "over": 60.0,
+             "climb_note": True,
+             "way": "out of the lift, till it stops against the railing",
+             "done": "Stop. Next, push it west, to your right as you face out of the lift: ten pushes. "
+                     "Auto walk to the crate takes you round to the side to push it from."},
+            {"axis": 0, "sign": -1, "to": 921.3, "heading": -math.pi / 2,
+             "way": "west, along the railing",
+             "done": "Stop. Next, push it south, down the walkway towards the bridge: four pushes. Auto "
+                     "walk to the crate takes you round to the side to push it from."},
+            {"axis": 2, "sign": 1, "to": 1147.4, "heading": 0.0,
+             "way": "south, down the walkway, to beside the pillar",
+             "done": "Stop. Last, push it west, against the pillar. Auto walk to the crate takes you round "
+                     "to the side to push it from."},
+            {"axis": 0, "sign": -1, "to": 900.0, "heading": -math.pi / 2, "until_stops": True,
+             "way": "west, against the pillar",
+             "done": "Stop. The crate is against the pillar. Climb onto it from this side, face the pillar "
+                     "and press A for the Discipline Tablet. Auto walk to the Discipline Tablet does it."},
+        ],
+        "front_words": "Facing the crate in the lift. Press A to climb onto it, walk forward to its far "
+                       "edge, press A to get down behind it, then turn round and auto walk to the crate "
+                       "again. Rebecca has to wait out of the way: RB tells her to wait.",
+        # (climbed onto from the east side, the side last pushed from, facing the pillar)
+        "top_from": (75.0, 0.0, -math.pi / 2),
+        "on_top": ("Discipline Tablet", "Top of the pillar", "Pillar, the Discipline Tablet is on top"),
+        "done_words": "against the pillar, climb on it for the Discipline Tablet",
+        "off": "The crate is off the way the guide knows. Push it back in line with where it was.",
+        "push_words": "Hold forward to push the crate %s.",
+    },
 }
 
 
@@ -231,9 +272,15 @@ class PushMixin:
         pz = self.push_puzzle()
         s = pz["stages"][i]
         x, z = pos[0], pos[2]
+        self.push_spot_words = None
         if pz.get("pieces"):
             # (straight behind it, square on: a piece moves the way it is pushed)
             r = s.get("reach", pz.get("reach", 85.0))
+            if s.get("climb_note") and s["axis"] == 2 and (p is None or (p[2] - z) * s["sign"] > -40.0):
+                # (not behind it yet - the crate in the lift has its back to the wall: to its
+                # front, facing it, to climb over)
+                self.push_spot_words = pz.get("front_words")
+                return (x, z + s["sign"] * r), s["heading"] + math.pi, False
             if s["axis"] == 0:
                 return (x - s["sign"] * r, z), s["heading"], False
             return (x, z - s["sign"] * r), s["heading"], False
@@ -264,7 +311,8 @@ class PushMixin:
         spot = R.Thing("check", t.name, (sx, t.pos[1], sz), ((sx - r, t.pos[1] - 10, sz - r), (sx + r, t.pos[1] + 10, sz + r)),
                        stand=True, outline=[(sx - r, sz - r), (sx + r, sz - r), (sx + r, sz + r), (sx - r, sz + r)])
         spot.push_of = t
-        self.push_plan = {"heading": heading, "climb": climb, "stage": i, "guide": guide, "t": t}
+        self.push_plan = {"heading": heading, "climb": climb, "stage": i, "guide": guide, "t": t,
+                          "words": getattr(self, "push_spot_words", None)}
         logging.info("push walk: stage %s spot %.0f,%.0f climb %s", i, sx, sz, climb)
         if p and math.hypot(p[0] - sx, p[2] - sz) < 30.0:
             self.walk_target = spot
@@ -286,20 +334,28 @@ class PushMixin:
         if not p:
             return False
         first = pz["stages"][0]
+        if pz.get("top_from"):
+            first = dict(first, heading=pz["top_from"][2], axis=0, sign=-1 if pz["top_from"][0] > 0 else 1)
         if p[1] - pos[1] > 70.0:
             # (on it already: only turn to face it)
-            self.push_plan = {"heading": first["heading"], "climb": True, "stage": 1, "top": t, "guide": guide}
+            self.push_plan = {"heading": first["heading"], "climb": True, "stage": 1, "top": t, "guide": guide,
+                              "first": first}
             now = time.monotonic()
             self.push_climb = {"step": 5, "y0": p[1], "next": now, "release": 0.0, "since": now,
                                "presses": 0, "until": now + 15.0}
             return True
         # (climbed from the side it was first pushed from: square on to it, then up and facing the wall)
         sx, sz = pos[0] - first["sign"] * 85.0, pos[2]
+        if pz.get("top_from"):
+            dx, dz, hd = pz["top_from"]
+            sx, sz = pos[0] + dx, pos[2] + dz
+            first = dict(first, heading=hd, axis=0, sign=-1 if dx > 0 else 1)
         r = 10.0
         spot = R.Thing("check", t.name, (sx, pos[1], sz), ((sx - r, pos[1] - 10, sz - r), (sx + r, pos[1] + 10, sz + r)),
                        stand=True, outline=[(sx - r, sz - r), (sx + r, sz - r), (sx + r, sz + r), (sx - r, sz + r)])
         spot.push_of = pz
-        self.push_plan = {"heading": first["heading"], "climb": True, "stage": 1, "top": t, "guide": guide}
+        self.push_plan = {"heading": first["heading"], "climb": True, "stage": 1, "top": t, "guide": guide,
+                          "first": first}
         logging.info("top walk: to %s from %.0f,%.0f", t.name, sx, sz)
         if math.hypot(p[0] - sx, p[2] - sz) < 30.0:
             self.walk_target = spot
@@ -460,6 +516,9 @@ class PushMixin:
         self.push_plan = None
         pz = self.push_puzzle()
         s = pz["stages"][pp["stage"]]
+        if pp.get("words"):
+            self.stop_walk("Here. " + pp["words"])
+            return True
         self.stop_walk("Here. " + pz["push_words"] % s["way"])
         return True
 
@@ -534,7 +593,7 @@ class PushMixin:
             if want_up:
                 # (in line with its middle and square on to it: A only climbs it from there - a
                 # step into it first would start a push instead)
-                prev = pz["stages"][pp.get("stage", 1) - 1]
+                prev = pp.get("first") or pz["stages"][pp.get("stage", 1) - 1]
                 t = self.push_obj_pos()
                 if t and pc.get("aligns", 0) < 4:
                     lat = 2 if prev["axis"] == 0 else 0

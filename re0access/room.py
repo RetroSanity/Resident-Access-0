@@ -39,6 +39,10 @@ ZONE_NAMES = {
     ("dm04", 10): "Wolf statue",        # (My sharp wits allow me to bring down even the greatest horned beast)
     ("dm04", 11): "Horse statue",       # (No amount of cunning can match the speed of my supple limbs)
     ("dm04", 12): "Panther statue",     # (I am the king of all I survey)
+    # (the Training Facility Entrance's pillar with the Discipline Tablet on top: "There's something
+    # there, but you can't see it well from here" - and from on the crate pushed beside it)
+    ("sh09", 12): "Pillar, the Discipline Tablet is on top",
+    ("sh09", 8): "Top of the pillar",
 }
 TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
 
