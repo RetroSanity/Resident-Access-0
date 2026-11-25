@@ -4,7 +4,7 @@ played blind with an Xbox controller. It speaks through your screen reader
 (NVDA, JAWS, ZoomText, System Access and others), or Windows' own voice if no
 screen reader is running.
 
-This is an early build (0.41). It is built from Resident Access HD
+This is an early build (0.42). It is built from Resident Access HD
 (the mod for Resident Evil HD Remaster), and more is coming.
 
 Installing
@@ -60,6 +60,9 @@ What it reads by itself
 - The clock: the time it shows when you are asked which hand to turn, and
   the new time each time a hand moves ("8:15"). Its buttons (Left, Right,
   Hour hand or Minute hand, OK) are said only as you move onto them.
+- The combination dials (the Duralumin Case): when they come up, the numbers
+  and which dial you are on; then the dial's name and number as you move
+  (left, middle, right), and each new number as you turn it.
 - Pictures that carry a clue are described after their words: the Microfilm
   Image (and the projector showing both microfilms) says which number is on
   which seat of the conference room.
@@ -103,6 +106,17 @@ of the room say "upstairs" or "downstairs".
     under the moose head, auto walk to the Iron Needle (or the moose head)
     climbs onto the table and faces it. Standing on the table, auto walk to
     anything else gets you down first.
+  - The crate that comes down on the lift outside the Training Facility
+    entrance (once the Battery powers it): while it is in the lift, auto walk
+    takes you to its front to climb over it (A, walk to the far edge, A);
+    then out of the lift, west, south and against the pillar, with the
+    pushes counted down. Auto walk to the Discipline Tablet climbs onto it
+    and faces the tablet. Your partner standing in the way stops the crate:
+    the right bumper tells them to wait (and to follow again).
+  - The white king in the chess room, pushed south, east and north; any
+    other piece lets out gas.
+  - A place a key item was taken from stays listed while someone carries
+    it, as where it goes back ("Where the Battery goes").
   - The lecture room's lectern, and its sixteen seats ("Seat 2, front row,
     right of the aisle"), numbered as on the Microfilm Image: auto walk
     takes you behind the seat's desk, facing it.
