@@ -149,6 +149,9 @@ ROOM_NAMES = {
     "dm04": "Statue Room", "dm05": "Storage Room", "dm06": "Bunk Room B", "dm07": "Bunk Room A",
     "dm08": "Waterfall Room", "dm09": "Cavernous Area", "dm0a": "Training Room", "dm0b": "Torture Room A",
     "dm0c": "Torture Room B",
+    # The Laboratory (the way there from the Observatory Tower, once the tablets have lowered it:
+    # the area outside, with the church; ch10 is the same later)
+    "ch00": "Outside Area, to the Laboratory", "ch10": "Outside Area, to the Laboratory",
 }
 
 
