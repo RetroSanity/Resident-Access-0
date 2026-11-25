@@ -8,6 +8,7 @@ Hold the left bumper (not aiming) and:
 - Right bumper: the enemies in the room.
 """
 import logging
+import copy
 import math
 import os
 import time
@@ -296,10 +297,14 @@ class RoomList(PushMixin):
                         continue
                     out.append(t)
                 if kind in ("puzzle", "check"):
-                    # (the place a key item was got from, named after it, once someone has it:
-                    # the Piano Bar's Battery, behind the bar)
+                    # (the place a key item was got from, named after it, while someone has it:
+                    # where it goes back - the Piano Bar's Battery, behind the bar)
                     got = self.carried_key_names()
-                    out = [t for t in out if t.name not in got]
+                    for k, t in enumerate(out):
+                        if t.name in got:
+                            t2 = copy.copy(t)
+                            t2.name = "Where the %s goes" % t.name
+                            out[k] = t2
                 if kind == "puzzle":
                     pt = self.push_thing()
                     if pt is not None:
