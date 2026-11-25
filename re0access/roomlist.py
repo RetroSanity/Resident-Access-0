@@ -1859,6 +1859,9 @@ class RoomList(PushMixin):
         return self.space
 
     def stop_walk(self, words=None):
+        t = getattr(self, "walk_target", None)
+        if words and words.startswith("Here") and t is not None and getattr(t, "pad_words", None):
+            words = t.pad_words     # (a pressure pad: stood on, nothing to press)
         self.settling = None
         if getattr(self, "beeps", None):
             self.beeps.quiet()

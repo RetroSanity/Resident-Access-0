@@ -49,7 +49,8 @@ ZONE_NAMES = {
 }
 # Zones the script uses but that say nothing to name them by: (room, zone) -> (kind, name).
 EXTRA_ZONES = {
-    # (inside the small building in the Outside Area: stood on, it unlocks the church door)
+    # (inside the small building in the Outside Area: Rebecca stood on its north edge, facing it,
+    # the church door opens for Billy - found by the player; the Shotgun Ammo lies on it too)
     ("ch00", 5): ("check", "Pressure pad, unlocks the Church door"),
 }
 TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
@@ -377,8 +378,12 @@ class RoomData:
                 lo, hi = _box(zones[index])
                 centre = tuple((a + b) / 2.0 for a, b in zip(lo, hi))
                 centre = (centre[0], lo[1], centre[2])
-                self.things.append(Thing(kind_, name_, centre, (lo, hi), zone=index, says=[],
-                                         outline=_footprint(zones[index]), puzzle=True))
+                th = Thing(kind_, name_, centre, (lo, hi), zone=index, says=[],
+                           outline=_footprint(zones[index]), puzzle=True)
+                if name_.startswith("Pressure pad"):
+                    th.pad_words = ("On the pressure pad. Leave Rebecca here and switch to Billy to go "
+                                    "into the Church.")
+                self.things.append(th)
                 used.add(index)
         # (where to stand to use a typewriter whose own side is blocked: the Main Hall's has a
         # counter in front of it - A reaches it from its right-hand end, facing west)
