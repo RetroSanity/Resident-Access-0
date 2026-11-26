@@ -784,6 +784,9 @@ class App(RoomList, ModMenu):
             self.say("%s has died." % name, interrupt=True)
         self.dead_seen = dead
 
+    # (each loop, in this order)
+    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial']
+
     def run(self):
         self.say("Resident Access 0, version %s. Waiting for the game." % VERSION)
         while True:
@@ -806,38 +809,23 @@ class App(RoomList, ModMenu):
                 self.text_quiet_until = time.monotonic() + 2.0
                 self.say("Resident Access 0 ready.")
             try:
-                self.poll_pad_fix()
-                self.poll_room()
-                self.poll_title()
-                self.poll_text()
-                self.poll_death()
-                self.poll_controller()
-                self.poll_offset()
-                self.poll_walk()
-                self.poll_ledge()
-                self.poll_push()
-                self.poll_taken()
-                self.poll_partner()
-                self.poll_modmenu()
-                self.poll_enemies()
-                self.poll_item_screen()
-                self.poll_examine()
-                self.poll_equip()
-                self.poll_files()
-                self.poll_choice()
-                self.poll_clock()
-                self.poll_hold()
-                self.poll_save()
-                self.poll_load_choice()
-                self.poll_brake()
-                self.poll_dial()
+                t_loop = time.perf_counter()
+                slow = []
+                for poll in self.POLLS:
+                    t_p = time.perf_counter()
+                    getattr(self, poll)()
+                    d = time.perf_counter() - t_p
+                    if d > 0.1:
+                        slow.append("%s %.2f s" % (poll, d))
+                if slow and time.perf_counter() - t_loop > 0.2:
+                    logging.info("slow: %s", ", ".join(slow))   # (to find what makes the mod lag)
             except NotReady:
                 pass
             except Exception:
                 logging.exception("poll")
-            # (steering auto walk and the beacon wants quick turns: twice as often while walking)
+            # (quick to answer the controller; steering auto walk wants quick turns, more so)
             busy = self.walker.walking or getattr(self, "turning", None) or getattr(self, "push_plan", None)
-            time.sleep(0.025 if busy else 0.05)
+            time.sleep(0.02 if busy else 0.03)
 
 
 def other_copies():

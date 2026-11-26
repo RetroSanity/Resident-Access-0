@@ -575,27 +575,13 @@ class Game:
     def dead_spots(self, scene):
         """[(x, z)] where the enemies killed in a room lie (room-local cm): the game's record of each
         enemy (sArrange) gets 0x100 at +0x40 once it is killed, and keeps where it fell. A body is
-        still an enemy object when you come back, with its health full again. Read at most once a second."""
-        now = time.monotonic()
-        c = getattr(self, "_dead_cache", None)
-        if c and c[0] == scene and now - c[1] < 1.0:
-            return c[2]
-        out = []
+        still an enemy object when you come back, with its health full again."""
         try:
-            gw = self.mem.ptr(GAME_WORK)
-            data = self.mem.read(gw + ARRANGE_FIRST, ARRANGE_SIZE * ARRANGE_COUNT)
+            recs = self.arrange()
         except NotReady:
-            return c[2] if c and c[0] == scene else []
-        for k in range(ARRANGE_COUNT):
-            o = k * ARRANGE_SIZE
-            room, _r2, kind = struct.unpack_from("<iiI", data, o + 4)
-            if room != scene or kind in NOT_ENEMY_RECORDS:
-                continue
-            if struct.unpack_from("<I", data, o + 0x40)[0] & KEY_TAKEN:
-                x, _y, z = struct.unpack_from("<3f", data, o + 0x28)
-                out.append((x, z))
-        self._dead_cache = (scene, now, out)
-        return out
+            return []
+        return [(pos[0], pos[2]) for k, room, _r2, kind, item, flag, put, pos, done, now in recs
+                if room == scene and kind not in NOT_ENEMY_RECORDS and done & KEY_TAKEN]
 
     def enemies(self):
         """[(object, kind, (x, y, z) in the room, health)] for the enemies in the room (health 0 for a
@@ -634,27 +620,38 @@ class Game:
 
     key_items = set()       # (items with a key item's record: there is one of each)
 
+    _ARR = struct.Struct("<4xiiIII8xi4x3f12xIi20x")   # one record: room, room, kind, item, flag, put, x, y, z, done, now
+
+    def arrange(self):
+        """The game's record of what is placed in every room (sArrange), read at most every quarter
+        second: [(index, room, kind, item, flag, put, (x, y, z), done, now)]."""
+        now = time.monotonic()
+        c = getattr(self, "_arr_cache", None)
+        if c and now - c[0] < 0.25:
+            return c[1]
+        gw = self.mem.ptr(GAME_WORK)
+        data = self.mem.read(gw + ARRANGE_FIRST, ARRANGE_SIZE * ARRANGE_COUNT)
+        out = [(k, room, r2, kind, item, flag, put, (x, y, z), done, cnt)
+               for k, (room, r2, kind, item, flag, put, x, y, z, done, cnt) in enumerate(self._ARR.iter_unpack(data))]
+        for r in out:
+            if r[3] == 0x78:
+                self.key_items.add(r[4])
+        self._arr_cache = (now, out)
+        return out
+
     def placed_items(self, scene):
         """[(index, item, amount, (x, y, z))] of the items lying in a room now (dropped ones too)."""
         try:
-            gw = self.mem.ptr(GAME_WORK)
-            data = self.mem.read(gw + ARRANGE_FIRST, ARRANGE_SIZE * ARRANGE_COUNT)
+            recs = self.arrange()
         except NotReady:
             return None
         out = []
-        for k in range(ARRANGE_COUNT):
-            o = k * ARRANGE_SIZE
-            room, _r2, kind, item, flag = struct.unpack_from("<iiIII", data, o + 4)
-            if kind not in (0x71, 0x78) or room != scene or 0xA0 <= flag <= 0xAF:   # (0x78: key items)
+        for k, room, _r2, kind, item, flag, put, pos, done, now in recs:
+            if room != scene or kind not in (0x71, 0x78) or 0xA0 <= flag <= 0xAF:   # (0x78: key items)
                 continue        # (0xA0 and on: the extras unlocked by finishing the game)
-            if kind == 0x78:
-                self.key_items.add(item)
-                if struct.unpack_from("<I", data, o + 0x40)[0] & KEY_TAKEN:
-                    continue    # (picked up, by either of them, at any time: the Train Key once Rebecca has it)
-            put = struct.unpack_from("<i", data, o + 0x20)[0]
-            now = struct.unpack_from("<i", data, o + 0x44)[0]
-            x, y, z = struct.unpack_from("<3f", data, o + 0x28)
-            out.append((k, item, now, put, (x, y, z)))
+            if kind == 0x78 and done & KEY_TAKEN:
+                continue        # (picked up, by either of them, at any time: the Train Key once Rebecca has it)
+            out.append((k, item, now, put, pos))
         return out
 
     def room_offset(self):

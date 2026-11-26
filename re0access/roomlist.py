@@ -11,6 +11,7 @@ import logging
 import copy
 import math
 import os
+import threading
 import time
 
 from . import link as L
@@ -155,6 +156,7 @@ class RoomList(PushMixin):
                                     for t in sbc.triangles(sbc.unpack(d, ents[key_a]))]
                 if self.fix_step_heights():
                     self.apply_spots(self.mesh_main)
+                self.prepare_meshes()
         except Exception:
             logging.exception("walk map %s", name)
         return self.room_data
@@ -975,14 +977,7 @@ class RoomList(PushMixin):
             self._alt_meshes = {}
         if not getattr(self, "mesh_main", None):
             return []
-        m = self._alt_meshes.get("floors")
-        if m is None:
-            try:
-                m = NavMesh(self._tris_e + (getattr(self, "_tris_a", None) or []), up_only=True)
-            except Exception:
-                logging.exception("floors")
-                m = False
-            self._alt_meshes["floors"] = m
+        m = self.cached_mesh("floors")
         if not m:
             return []
         return list(m.heights.get(m.cell(x, z), ()))
@@ -1052,15 +1047,9 @@ class RoomList(PushMixin):
         if main.free_at(x, y, z) or not getattr(self, "_tris_a", None):
             return
         for clearance in (200.0, 120.0):
-            m = self._alt_meshes.get(clearance)
-            if m is None:
-                try:
-                    m = NavMesh(self._walls_e() + self._tris_a, clearance=clearance, up_only=True)
-                    self.apply_spots(m)
-                except Exception:
-                    logging.exception("second walk map")
-                    return
-                self._alt_meshes[clearance] = m
+            m = self.cached_mesh(clearance)
+            if not m:
+                return
             if m.free_at(x, y, z):
                 self.mesh = m
                 logging.info("walk map: second one, clearance %d", clearance)
@@ -1172,24 +1161,61 @@ class RoomList(PushMixin):
         and stairs), made the first time it is wanted; None if there is none."""
         if not getattr(self, "_tris_a", None) or not getattr(self, "mesh_main", None):
             return None
-        if not hasattr(self, "_alt_meshes"):
-            self._alt_meshes = {}
-        m = self._alt_meshes.get(clearance)
-        if m is None:
-            try:
-                m = NavMesh(self._walls_e() + self._tris_a, clearance=clearance, up_only=True)
-                self.apply_spots(m)
-            except Exception:
-                logging.exception("second walk map")
-                m = False
-            self._alt_meshes[clearance] = m
-        return m or None
+        return self.cached_mesh(clearance) or None
 
-    def _walls_e(self):
+    def cached_mesh(self, key, src=None):
+        """One of the room's extra walk maps ("floors", "fine", or the second map at a clearance),
+        made once. They are made ahead in the background as you come into a room (prepare_meshes),
+        so the list and auto walk do not wait for them; asked for while one is being made, this waits
+        for it rather than making it again."""
+        if src is None:
+            if not hasattr(self, "_alt_meshes"):
+                self._alt_meshes = {}
+            src = (self._alt_meshes, getattr(self, "_tris_e", None) or [], getattr(self, "_tris_a", None) or [])
+        store, tris_e, tris_a = src
+        locks = self.__dict__.setdefault("_mesh_locks", {})
+        lock = locks.setdefault((id(store), key), threading.Lock())
+        with lock:
+            m = store.get(key)
+            if m is None:
+                t0 = time.monotonic()
+                try:
+                    if key == "floors":
+                        m = NavMesh(tris_e + tris_a, up_only=True)
+                    elif key == "fine":
+                        # (with the walls of the second collision file too: the counter round the Main
+                        # Hall's typewriter is only there)
+                        m = NavMesh(tris_e + self._walls_of(tris_a), clearance=170.0)
+                    elif tris_a:
+                        m = NavMesh(self._walls_e(tris_e) + tris_a, clearance=key, up_only=True)
+                        if store is self._alt_meshes:
+                            self.apply_spots(m)
+                    else:
+                        m = False
+                except Exception:
+                    logging.exception("walk map %s", key)
+                    m = False
+                store[key] = m
+                if time.monotonic() - t0 > 0.3:
+                    logging.info("walk map %s made in %.1f s", key, time.monotonic() - t0)
+        return m
+
+    def prepare_meshes(self):
+        """Make the room's extra walk maps in the background, the ones wanted first first."""
+        src = (self._alt_meshes, list(getattr(self, "_tris_e", None) or []), list(getattr(self, "_tris_a", None) or []))
+
+        def work():
+            for key in ("floors", 200.0, 120.0, "fine"):
+                if self._alt_meshes is not src[0]:
+                    return          # (gone into another room meanwhile: these would be the old room's)
+                self.cached_mesh(key, src)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _walls_e(self, tris=None):
         """The main walk map's walls only (its flat tops of furniture would make steps up to
         the second map's high places)."""
         out = []
-        for a, b, c in self._tris_e:
+        for a, b, c in (self._tris_e if tris is None else tris):
             ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
             vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
             nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
@@ -1346,6 +1372,15 @@ class RoomList(PushMixin):
         return None
 
     def start_walk(self, guide=False, target=None):
+        t0 = time.monotonic()
+        try:
+            self._start_walk(guide, target)
+        finally:
+            took = time.monotonic() - t0
+            if took > 0.25:
+                logging.info("start walk took %.2f s", took)
+
+    def _start_walk(self, guide=False, target=None):
         t = target or self.current_target()
         if t is None:
             self.say("Pick something in the list first.", interrupt=True)
@@ -1783,18 +1818,7 @@ class RoomList(PushMixin):
                     cands.append(((sx, sz), math.atan2(nx, nz), back))
 
         # (where the player can stand: closer to a table than the walk map keeps)
-        if not hasattr(self, "_alt_meshes"):
-            self._alt_meshes = {}
-        fine = self._alt_meshes.get("fine")
-        if fine is None:
-            try:
-                # (with the walls of the second collision file too: the counter round the Main
-                # Hall's typewriter is only there)
-                fine = NavMesh(self._tris_e + self._walls_of(getattr(self, "_tris_a", None) or []), clearance=170.0)
-            except Exception:
-                logging.exception("fine walk map")
-                fine = False
-            self._alt_meshes["fine"] = fine
+        fine = self.cached_mesh("fine")
         stand = fine or self.mesh
         mine = stand.region(p[0] * MM, y, p[2] * MM)
         # (free, and joined to where you are: not inside a counter whose walls close it round)
