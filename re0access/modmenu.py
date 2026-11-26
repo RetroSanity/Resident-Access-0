@@ -1,6 +1,6 @@
 """Mod settings, as a row under the game's own Start menu (like Resident Access HD's under its
 Option menu), and the mod's sounds that the settings control (the aim beep, the arrival chime, the
-3D beacon's knock).
+3D beacon's knock, the auto walk beep).
 
 The Start menu in play has two rows, Back and Quit Game. On Quit Game a step down goes to "Mod
 settings" instead of round to the top: A opens it, up and down choose a setting there, left and
@@ -12,8 +12,8 @@ import time
 
 from . import link as L
 
-MOD_ROWS = ["guide", "arrive", "aim", "sounds", "back"]
-ROW_NAMES = {"guide": "3D beacon volume", "arrive": "Arrival chime volume", "aim": "Aim beep volume"}
+MOD_ROWS = ["guide", "walk", "arrive", "aim", "sounds", "back"]
+ROW_NAMES = {"guide": "3D beacon volume", "walk": "Auto walk beep volume", "arrive": "Arrival chime volume", "aim": "Aim beep volume"}
 NAV = L.UP | L.DOWN | L.LEFT | L.RIGHT | L.A | L.B | L.START
 
 
@@ -29,7 +29,9 @@ class ModMenu:
         except (OSError, ValueError):
             pass
         vols = self.settings.get("volumes", {})
-        self.volumes = {k: max(0.0, min(2.0, float(vols.get(k, 1.0)))) for k in ("guide", "arrive", "aim")}
+        if "walk" not in vols and "guide" in vols:
+            vols["walk"] = vols["guide"]    # (the auto walk beep went with the 3D beacon's volume before)
+        self.volumes = {k: max(0.0, min(2.0, float(vols.get(k, 1.0)))) for k in ("guide", "walk", "arrive", "aim")}
         self.sounds_on = bool(self.settings.get("sounds", True))
         self.beeps = None
         try:

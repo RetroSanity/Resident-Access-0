@@ -459,17 +459,27 @@ class RoomList(PushMixin):
         es = self.game.enemies()
         was = getattr(self, "enemy_hp", {})
         now_hp = {}
+        died, hits = [], []
         for obj, ek, pos, hp in es:
             now_hp[obj] = hp
             if hp > 0:
                 top = self.enemy_top(obj, hp)
             old = was.get(obj)
             if old is not None and old > 0 and hp < old and getattr(self, "_hp_scene", None) == self.scene:
-                # hit: how much it has left (or that it is down)
+                # hit: how much it has left (or that it is dead)
                 if hp <= 0:
-                    self.say("%s down." % enemy_name(ek), interrupt=True)
+                    died.append(enemy_name(ek))
                 else:
-                    self.say("%d percent" % max(1, round(100.0 * hp / top)), interrupt=True)
+                    hits.append(max(1, round(100.0 * hp / top)))
+        # (one line for all that died at once: the bat's little bats die with it)
+        if len(died) == 1:
+            self.say("%s dead." % died[0], interrupt=True)
+        elif died:
+            many = {"Zombie": "zombies", "Leech": "leeches", "Spider": "spiders", "Cerberus": "Cerberuses"}
+            what = many.get(died[0], "enemies") if len(set(died)) == 1 else "enemies"
+            self.say("%d %s dead." % (len(died), what), interrupt=True)
+        elif hits:
+            self.say("%d percent" % min(hits), interrupt=True)
         self.enemy_hp = now_hp
         self._hp_scene = self.scene
         beeps = getattr(self, "beeps", None)
@@ -485,33 +495,57 @@ class RoomList(PushMixin):
         real = self.link.real()
         return bool(real.get("buttons", 0) & L.RB) and not self.lb_mode
 
+    FLYING = {0x35, 0x3C}       # (the bats: up in the air, shot by aiming up)
+
     def shot_would_hit(self, es):
         obj = self.me()
-        if not obj or not self.aiming():
+        aim = self.aiming()
+        if aim and not getattr(self, "_aim_was", False):
+            self._aim_log = True        # (each time the weapon goes up: why it would or would not hit, in the log)
+        self._aim_was = aim
+        if not obj or not aim:
             return False
         p = self.game.local_pos(obj)
         h = self.game.heading(obj)
+        log = getattr(self, "_aim_log", False)
+        self._aim_log = False
         if not p or h is None:
+            if log:
+                logging.info("aim: no place or heading (%s, %s)", p, h)
             return False
         x, y, z = p[0] * MM, p[1] * MM, p[2] * MM
+        why = []
+        hit = False
         for eobj, ek, pos, hp in es:
             if hp <= 0:
                 continue
             ex, ey, ez = pos[0] * MM, pos[1] * MM, pos[2] * MM
-            if abs(ey - y) > 1500:
-                continue
+            flying = ek in self.FLYING
             dist = math.hypot(ex - x, ez - z)
+            d = angle_diff(math.atan2(ex - x, ez - z), h)
+            clear = self.mesh is None or self.mesh.clear_shot(x, y, z, ex, ez)
+            if log:
+                why.append("%s hp %d dist %.0f up %.0f angle %.0f clear %s" % (
+                    enemy_name(ek), hp, dist, ey - y, math.degrees(d), clear))
+            if abs(ey - y) > (6000 if flying else 1500):
+                continue
             if dist > self.GUN_REACH:
                 continue
-            d = angle_diff(math.atan2(ex - x, ez - z), h)
+            if flying and dist < 1500 and ey - y > 800:
+                hit = True              # (right overhead: aiming up gets it)
+                break
             if abs(d) > math.pi / 2:
                 continue
-            if dist * math.sin(abs(d)) > self.HIT_WIDTH and abs(d) > self.CONE:
+            width = self.HIT_WIDTH * (1.8 if flying else 1.0)
+            if dist * math.sin(abs(d)) > width and abs(d) > self.CONE:
                 continue
-            if self.mesh is not None and not self.mesh.clear_shot(x, y, z, ex, ez):
+            if not clear:
                 continue
-            return True
-        return False
+            hit = True
+            break
+        if log:
+            logging.info("aim: hit=%s; %s", hit, "; ".join(why) or "no living enemies")
+        return hit
 
     def enemy_top(self, obj, hp):
         """An enemy's full health: the most it has been seen with (they come into a room unhurt)."""
@@ -1860,8 +1894,8 @@ class RoomList(PushMixin):
 
     def stop_walk(self, words=None):
         t = getattr(self, "walk_target", None)
-        if words and words.startswith("Here") and t is not None and getattr(t, "pad_words", None):
-            words = t.pad_words     # (a pressure pad: stood on, nothing to press)
+        if words and words.startswith(("Here", "On the")) and t is not None and getattr(t, "pad_words", None):
+            words = t.pad_words     # (a pressure pad: stood on, nothing to press; the Hookshot's place)
         self.settling = None
         if getattr(self, "beeps", None):
             self.beeps.quiet()

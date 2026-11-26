@@ -53,6 +53,13 @@ EXTRA_ZONES = {
     # the church door opens for Billy - found by the player; the Shotgun Ammo lies on it too)
     ("ch00", 5): ("check", "Pressure pad, unlocks the Church door"),
 }
+HOOKSHOT_KIND = 0x1E       # an entry for using the Hookshot in a zone (it takes you up to another room)
+# (room, zone) -> what it is, where its words do not say (the library's: "the camera moves to a
+# large hole in the ceiling" as you walk under it; its zone is a bookshelf's)
+HOOKSHOT_NAMES = {("ch0d", 5): "Hole in the ceiling"}
+# (rooms whose script has the place before it is there: the Church before the bat breaks the roof,
+# ch01, and during the fight, ch11; after it the Church is ch1f)
+HOOKSHOT_NOT_YET = {"ch01", "ch11"}
 TYPEWRITER_SPOTS = {"sh00": (1075.0, 827.0, 1142.0, 845.0, -math.pi / 2)}
 
 OP_TYPEWRITER = 0x51      # 00 51 01: the typewriter (save) question
@@ -297,7 +304,9 @@ class RoomData:
                     msgs = [m for m in script.messages(body) if m < len(texts)]
                     words = [names.clean(texts[m]) for m in msgs]
                     words = [w for w in words if w and w != "Invalid Message" and w.isascii()]
-                    if not words and any(body[i] == 0 and body[i + 1] == OP_TYPEWRITER for i in range(len(body) - 2)):
+                    if not words and body[:2] == bytes((0, OP_TYPEWRITER)):
+                        # (a typewriter's own entry starts with the question; "00 51" further in is
+                        # part of another instruction - the Freight Car and Dining Car have one)
                         self.things.append(Thing("check", "Typewriter", centre, (lo, hi), zone=index, says=[],
                                                  outline=_footprint(zones[index])))
                         used.add(index)
@@ -373,6 +382,34 @@ class RoomData:
                     self.things.append(Thing("check", name, centre, (lo, hi), zone=index, says=words,
                                              outline=_footprint(zones[index]), puzzle=puzzle))
                     used.add(index)
+        # Places to use the Hookshot (a kind 0x1E entry that takes you to another room: the
+        # Church's hole in the roof the bat made, the library's hole in the ceiling). The zone
+        # can be a door's too (the Church's is the entrance's): you stand in it and use the
+        # Hookshot from your items, not A.
+        if script:
+            for kind, off, index in script.entries:
+                if kind != HOOKSHOT_KIND or index not in zones or code in HOOKSHOT_NOT_YET:
+                    continue
+                to = script.doors(off)
+                if not to:
+                    continue
+                target = scene_of(*to[0])
+                where = (", up to " + room_words(target)) if target is not None else ""
+                says = []
+                for k2, o2, i2 in script.entries:
+                    if i2 == index and k2 not in DOOR_KINDS:
+                        says += [names.clean(texts[m]) for m in script.messages(script.body(o2)) if m < len(texts)]
+                low = " ".join(says).lower()
+                what = "Hole in the roof" if "get up there" in low else "Place to use the Hookshot"
+                what = HOOKSHOT_NAMES.get((self.base_code, index), what)
+                name = what + ("" if "Hookshot" in what else ", use the Hookshot here") + where
+                lo, hi = _box(zones[index])
+                centre = ((lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2)
+                th = Thing("check", name, centre, (lo, hi), zone=index, says=[], puzzle=True, stand=True,
+                           outline=_footprint(zones[index]), hookshot=True)
+                th.pad_words = "Here. Open your items and use the Hookshot."
+                self.things.append(th)
+                used.add(index)
         for (code_, index), (kind_, name_) in EXTRA_ZONES.items():
             if code_ == self.base_code and index in zones and index not in used:
                 lo, hi = _box(zones[index])

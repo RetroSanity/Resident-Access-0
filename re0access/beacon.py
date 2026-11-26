@@ -114,7 +114,7 @@ def _pulse(pan, length=0.16, volume=1.3):
 
 
 # The mod's sounds that have a volume setting: name -> what it is called.
-SOUNDS = [("guide", "Guide beep"), ("arrive", "Arrival chime"), ("aim", "Aim beep")]
+SOUNDS = [("guide", "Guide beep"), ("walk", "Auto walk beep"), ("arrive", "Arrival chime"), ("aim", "Aim beep")]
 
 
 class Beacon:
@@ -144,7 +144,7 @@ class Beacon:
         pan = int(round(max(-1.0, min(1.0, right)) * 4))  # -4 to 4
         key = (pitch, pan)
         if key not in self._cache:
-            self._cache[key] = _tone(440 + pitch * 110, pan / 4 * 0.9, volume=0.35 * self.volumes["guide"])
+            self._cache[key] = _tone(440 + pitch * 110, pan / 4 * 0.9, volume=0.35 * self.volumes["walk"])
         return self._cache[key]
 
     def point(self, distance, ahead, right):
@@ -197,7 +197,7 @@ class Beacon:
         """value 0 (silent) to 2 (twice as loud as normal)."""
         self.volumes[name] = max(0.0, min(2.0, value))
         with self._lock:
-            if name == "guide":
+            if name in ("guide", "walk"):
                 self._cache = {}
             elif name == "aim":
                 self._threat_cache = {k: v for k, v in self._threat_cache.items() if k[0] != "hit"}
@@ -206,7 +206,7 @@ class Beacon:
 
     def preview(self, name):
         """Play one of the sounds once, at its volume."""
-        if name == "guide":
+        if name in ("guide", "walk"):
             parts = [self.sound_for(1.0, 0.0)] * 2
         elif name == "aim":
             parts = [_aim_beep(0.0, volume=self.volumes["aim"])] * 2

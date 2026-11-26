@@ -28,7 +28,7 @@ Before you play
 When you start a new game, set Control Type to Original in Game Setup (or in
 Options, Controls). Up then always walks the way you face, and left and right
 turn you on the spot: auto walk and the 3D beacon need this. Keep Subtitles On
-so cutscenes are read.
+so cutscenes are read (with Subtitles Off the mod does not read them).
 
 What it reads by itself
 - The title screen, main menu, Load Game and its save slots, the difficulty
@@ -120,9 +120,13 @@ of the room say "upstairs" or "downstairs".
   - The lecture room's lectern, and its sixteen seats ("Seat 2, front row,
     right of the aisle"), numbered as on the Microfilm Image: auto walk
     takes you behind the seat's desk, facing it.
+  - Places to use the Hookshot (the hole the bat makes in the Church roof):
+    auto walk takes you under it and says to use the Hookshot from your
+    items.
 - The lists change as you go into each new room.
 - Enemies: what each one is, how far, and how much health it has left, in
-  percent.
+  percent. As you shoot one its health is said, and "dead" when it dies
+  ("Zombie dead"). Dead ones, and bodies left from before, are not listed.
 - Partner: Rebecca or Billy, whoever you are not playing, with their health,
   or "in another room".
 - With Rebecca and Billy in different rooms, everything is still measured
@@ -149,7 +153,7 @@ health (both characters' when Billy is with you).
 Aim beep
 While you hold the aim button (right bumper) a soft bell rings when firing now
 would hit a living enemy: one lined up in front of you, in range, with no wall
-in between.
+in between. Bats up in the air count when they are right above you.
 
 Auto walk
 It finds the way round walls and furniture and stops facing the thing, close
@@ -185,7 +189,8 @@ In play, press Start for the game's menu: Back, Quit Game, then "Mod
 settings" (the rows go round, so one step up from Back gets there too). The
 "Quit the game?" question under Quit Game is read, with Yes or No as you move. Press A to open it. Up and down choose, left
 and right change, B goes back.
-- 3D beacon, Arrival chime and Aim beep volumes: 0 to 200 percent.
+- 3D beacon, Auto walk beep, Arrival chime and Aim beep volumes: 0 to 200
+  percent.
 - Mod sounds: on or off. Off silences every sound the mod makes; speech
   carries on.
 

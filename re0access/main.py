@@ -16,6 +16,7 @@ import time
 
 from .game import Game, scene_words
 from . import text as T
+from . import game as G
 from . import gmd
 from .link import Link
 from . import link as L
@@ -173,6 +174,18 @@ class App(RoomList, ModMenu):
         # (a line with a name in it - "<P_BI>'s shoulders" - has the game lay the name out on its
         # own as well: said in the line, not again after it)
         named = {"Billy" for _c, _h, r in batch if "<P_BI>" in r} | {"Rebecca" for _c, _h, r in batch if "<P_RE>" in r}
+        if batch and self.game.subtitles_off():
+            # (Subtitles set to Off: the game should lay none out, but if its subtitles object does,
+            # they are not said; anything else said is logged with what laid it out, to check)
+            kept = []
+            for b in batch:
+                vt = self.game.class_of(b[1])
+                if vt in G.SUBTITLE_VTS:
+                    continue
+                kept.append(b)
+                if len(T.clean(b[2])) > 12 and b[2] not in self.text_seen:
+                    logging.info("subtitles off; text from %08X (vt %s): %s", b[1], vt and "%08X" % vt, T.clean(b[2])[:60])
+            batch = kept
         for caller, holder, raw in batch:
             self.note_text(T.clean(raw), now)
             if "Set number" in raw:

@@ -21,6 +21,12 @@ GAME_WORK = 0x00DCC010        # -> the game's state (sArrange); +0x24FB0 the sce
 ARRANGE_FIRST = 0x28
 ARRANGE_SIZE = 0x5C
 ARRANGE_COUNT = 1553
+GAME_CONFIG = 0x00DCC06C      # -> sGameConfig (the game's settings)
+CONFIG_SUBTITLES = 0x44       # in it: Subtitles, 0 On, 1 Off
+SUBTITLE_VTS = {0xCE1EA8, 0xD25A20, 0xD25A38}   # uGameGUISubtitles, uGUISubtitles: what lays subtitles out
+NOT_ENEMY_RECORDS = (0x00, 0x02, 0x05, 0x70, 0x71, 0x78)    # (items and where the players start)
+KEY_TAKEN = 0x100           # in a record (+0x40): set once a key item has been picked up (it stays 0x64
+                            # till then; the record's amount stays 1 either way), or an enemy killed
 SCENE_NO = 0x24FB0
 GAME_PAD = 0x00E2D7C8         # -> sGamePad
 GAME_CHARA = 0x00DCC0D0       # -> sGameChara: +0x50 a list of nodes (16 bytes, the object at +0xC)
@@ -98,7 +104,7 @@ ENEMY_VTS = {0xCBDCD8: 0x10, 0xCC4F28: 0x11, 0xCC50A0: 0x12, 0xCC5218: 0x14, 0xC
              0xCC3248: 0x46, 0xCC3710: 0x47, 0xCC5DD8: 0x50, 0xCC5F50: 0x51, 0xCC60C8: 0x5A, 0xCC6240: 0x5B,
              0xCC63B8: 0x6A, 0xCC6530: 0x6B}
 ZOMBIES = {0x10, 0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x50, 0x51, 0x5A, 0x5B, 0x6A, 0x6B}
-ENEMY_NAMES = {0x34: "Spider", 0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
+ENEMY_NAMES = {0x35: "Bat", 0x3C: "Giant bat", 0x34: "Spider", 0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
 
 
 def enemy_name(kind):
@@ -312,9 +318,16 @@ class Game:
         for name, obj in chars:
             try:
                 if self.mem.u32(self.mem.u32(obj + THINK)) == VT_THINK:
+                    self._last_controlled = name
                     return name, obj
             except NotReady:
                 pass
+        # (neither shows the controlled one's think object for a moment - while aiming, say: the
+        # one controlled last, not whoever comes first)
+        last = getattr(self, "_last_controlled", None)
+        for name, obj in chars:
+            if name == last:
+                return name, obj
         return chars[0]
 
     def motion(self, obj):
@@ -324,6 +337,21 @@ class Game:
             return None
 
     _pause = None
+
+    def subtitles_off(self):
+        """True when the game's Subtitles setting is Off (sGameConfig +0x44 = 1: the subtitles GUI
+        draws nothing then - 0x5D6EF0)."""
+        try:
+            return self.mem.u32(self.mem.ptr(GAME_CONFIG) + CONFIG_SUBTITLES) == 1
+        except NotReady:
+            return False
+
+    def class_of(self, obj):
+        """The vtable of an object, or None."""
+        try:
+            return self.mem.u32(obj) if obj else None
+        except NotReady:
+            return None
 
     def pause_menu(self):
         """(state, row) of the Start menu, or None. State 3 is open on its rows."""
@@ -534,10 +562,42 @@ class Game:
             return None
         return cur if 0 <= cur < 6 else None
 
+    def dead_spots(self, scene):
+        """[(x, z)] where the enemies killed in a room lie (room-local cm): the game's record of each
+        enemy (sArrange) gets 0x100 at +0x40 once it is killed, and keeps where it fell. A body is
+        still an enemy object when you come back, with its health full again. Read at most once a second."""
+        now = time.monotonic()
+        c = getattr(self, "_dead_cache", None)
+        if c and c[0] == scene and now - c[1] < 1.0:
+            return c[2]
+        out = []
+        try:
+            gw = self.mem.ptr(GAME_WORK)
+            data = self.mem.read(gw + ARRANGE_FIRST, ARRANGE_SIZE * ARRANGE_COUNT)
+        except NotReady:
+            return c[2] if c and c[0] == scene else []
+        for k in range(ARRANGE_COUNT):
+            o = k * ARRANGE_SIZE
+            room, _r2, kind = struct.unpack_from("<iiI", data, o + 4)
+            if room != scene or kind in NOT_ENEMY_RECORDS:
+                continue
+            if struct.unpack_from("<I", data, o + 0x40)[0] & KEY_TAKEN:
+                x, _y, z = struct.unpack_from("<3f", data, o + 0x28)
+                out.append((x, z))
+        self._dead_cache = (scene, now, out)
+        return out
+
     def enemies(self):
-        """[(object, kind, (x, y, z) in the room, health)] for the enemies in the room."""
+        """[(object, kind, (x, y, z) in the room, health)] for the enemies in the room (health 0 for a
+        dead one: killed now, or a body from before)."""
         out = []
         off = self.room_offset()
+        scene = self.scene()
+        dead = self.dead_spots(scene) if scene is not None else []
+        gone = self.__dict__.setdefault("_killed", {})
+        if gone.get("scene") != scene:
+            gone.clear()
+            gone["scene"] = scene
         for vt, obj in self.units():
             kind = ENEMY_VTS.get(vt)
             if kind is None:
@@ -549,6 +609,16 @@ class Game:
                 continue
             if off:
                 x, y, z = x - off[0], y - off[1], z - off[2]
+            fell = gone.get(obj)
+            if hp <= 0:
+                if fell is None:
+                    gone[obj] = (x, z)  # (stays dead while you are in the room, whatever its health does next)
+            elif fell is not None and math.hypot(x - fell[0], z - fell[1]) < 150.0:
+                hp = 0
+            elif any(abs(x - dx) < 40.0 and abs(z - dz) < 40.0 for dx, dz in dead):
+                hp = 0
+            elif fell is not None:
+                del gone[obj]       # (a new enemy in the same object, somewhere else: the bats keep coming)
             out.append((obj, kind, (x, y, z), hp))
         return out
 
@@ -567,12 +637,14 @@ class Game:
             room, _r2, kind, item, flag = struct.unpack_from("<iiIII", data, o + 4)
             if kind not in (0x71, 0x78) or room != scene or 0xA0 <= flag <= 0xAF:   # (0x78: key items)
                 continue        # (0xA0 and on: the extras unlocked by finishing the game)
+            if kind == 0x78:
+                self.key_items.add(item)
+                if struct.unpack_from("<I", data, o + 0x40)[0] & KEY_TAKEN:
+                    continue    # (picked up, by either of them, at any time: the Train Key once Rebecca has it)
             put = struct.unpack_from("<i", data, o + 0x20)[0]
             now = struct.unpack_from("<i", data, o + 0x44)[0]
             x, y, z = struct.unpack_from("<3f", data, o + 0x28)
             out.append((k, item, now, put, (x, y, z)))
-            if kind == 0x78:
-                self.key_items.add(item)
         return out
 
     def room_offset(self):
