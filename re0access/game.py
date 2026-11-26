@@ -283,7 +283,17 @@ class Game:
         return no if 0 <= no < 0x200 else None
 
     def units(self):
-        """[(vtable, object)] of the characters in the room: Rebecca, Billy, enemies, weapons."""
+        """[(vtable, object)] of the characters in the room: Rebecca, Billy, enemies, weapons.
+        (Asked for many times each loop: the list is walked again at most every 40 ms.)"""
+        now = time.monotonic()
+        c = getattr(self, "_units_cache", None)
+        if c and now - c[0] < 0.04:
+            return c[1]
+        out = self._walk_units()
+        self._units_cache = (now, out)
+        return out
+
+    def _walk_units(self):
         out = []
         seen = set()
         try:

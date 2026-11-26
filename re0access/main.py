@@ -835,7 +835,9 @@ class App(RoomList, ModMenu):
                 pass
             except Exception:
                 logging.exception("poll")
-            time.sleep(0.05)
+            # (steering auto walk and the beacon wants quick turns: twice as often while walking)
+            busy = self.walker.walking or getattr(self, "turning", None) or getattr(self, "push_plan", None)
+            time.sleep(0.025 if busy else 0.05)
 
 
 def other_copies():

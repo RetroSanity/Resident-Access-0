@@ -1323,6 +1323,28 @@ class RoomList(PushMixin):
         logging.info("walk: learnt something in the way at %.0f,%.0f", bx / MM, bz / MM)
         return True
 
+    def gate_on_way(self, t, p, way):
+        """A gate (a door into another part of the same room) the way goes through, or None."""
+        rd = self.room_data
+        if not rd or t.kind == "door" and t.name.startswith("Gate"):
+            return None
+        pts = [(p[0] * MM, p[2] * MM)] + list(way or [])
+        for g in rd.things:
+            if g.kind != "door" or not g.name.startswith("Gate") or not getattr(g, "box", None):
+                continue
+            (x0, _y0, z0), (x1, _y1, z1) = g.box
+            pad = 30.0
+            x0, x1, z0, z1 = (x0 - pad) * MM, (x1 + pad) * MM, (z0 - pad) * MM, (z1 + pad) * MM
+            for a, b in zip(pts, pts[1:]):
+                n = max(1, int(math.hypot(b[0] - a[0], b[1] - a[1]) / 100.0))
+                for k in range(n + 1):
+                    x = a[0] + (b[0] - a[0]) * k / n
+                    z = a[1] + (b[1] - a[1]) * k / n
+                    if x0 <= x <= x1 and z0 <= z <= z1 and \
+                            math.hypot(x - pts[0][0], z - pts[0][1]) > 1000.0:
+                        return g    # (not where you stand: just come through it, from its far side)
+        return None
+
     def start_walk(self, guide=False, target=None):
         t = target or self.current_target()
         if t is None:
@@ -1415,6 +1437,15 @@ class RoomList(PushMixin):
         if way is None:
             far = (", it's downstairs" if p[1] - gy > 150 else ", it's upstairs" if gy - p[1] > 150 else "")
             self.say("No way there from here%s." % far, interrupt=True)
+            return
+        gate = self.gate_on_way(t, p, way)
+        if gate is not None:
+            # (a gate within the room - the Outside Area's: the walking map goes straight through it,
+            # but it is a door, gone through with A. Walk to it first)
+            logging.info("walk to %s: through %s first", t.name, gate.name)
+            self.target = gate
+            self.start_walk(guide=guide, target=gate)
+            self.say("The way is through the gate. Press A at it, then auto walk again.", interrupt=False)
             return
         via = way[:-1] if way else []
         end = way[-1] if way else goal
