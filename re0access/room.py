@@ -30,11 +30,15 @@ CHECK_NAMES = [
 # (room: (typewriter x, z, stand x, z, facing) cm)
 # Names for things whose own words do not say what they are: (room, zone) -> name.
 # (checks that are where an item goes, though they ask nothing: listed under Puzzles)
-PUZZLE_ZONES = {("ch06", 2)}
+PUZZLE_ZONES = {("ch06", 2), ("ch05", 6), ("ch17", 6), ("ch18", 6), ("ch19", 6)}
 ZONE_NAMES = {
     # (the Leech Laboratory: the gas pump for the chamber next door takes the Sterilizing Agent
     # from the Morgue - "The sterilizing agent has been set into place")
     ("ch06", 2): "Gas pump, put the Sterilizing Agent here",
+    ("ch05", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
+    ("ch17", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
+    ("ch18", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
+    ("ch19", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
     ("ch06", 6): "Tank of bio-organic fluid",
     # (the Elevator Passage: the button on the Corridor above opens the wall below; the same panel
     # takes a four-digit code once the Dial is fitted)
