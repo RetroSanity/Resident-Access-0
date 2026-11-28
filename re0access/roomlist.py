@@ -52,7 +52,7 @@ def metres(cm):
 A_WALL_ROOMS = {"ch00", "ch10"}
 # (rooms whose stairs only the second collision file has whole: the main one walls them off at
 # both ends - the Factory Platform's steep stairs up to the Turntable Yard door)
-A_ONLY_ROOMS = {"bt00", "bt05"}
+A_ONLY_ROOMS = {"bt00", "bt05", "pl0e"}
 # (rooms where the floor you stand on rides up and down a shaft: the Factory's turntable)
 SHAFT_ROOMS = {"bt02"}
 # Walls the collision files leave out (mm: x1, z1, x2, z2, bottom, top): the Rec Room's railing
