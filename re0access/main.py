@@ -690,13 +690,10 @@ class App(RoomList, ModMenu):
         if raw != getattr(self, "dam_raw", None):
             self.dam_raw = raw
             logging.info("dam panel: step %d, point %d, %s", step, cur, raw)
-        if step == 9:
-            self.dam_picking = False    # (closing)
-        if not getattr(self, "dam_picking", False):
-            self.dam_was = None
+        if step != 5 or cur >= 22:
+            if step != 4:
+                self.dam_was = None     # (closing, or a point being picked: said again once back)
             return
-        if step != 4 or cur >= 22:
-            return                      # (a point being picked: carries on once the cursor is back)
         was = getattr(self, "dam_was", None)
         self.dam_was = cur
         if cur == was:

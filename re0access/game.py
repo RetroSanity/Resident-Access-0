@@ -868,7 +868,7 @@ class Game:
             return None
 
     def dam_panel(self):
-        """The Dam Area Power Supply Panel while it is up: (its step: 4 while you pick points, 9 once
+        """The Dam Area Power Supply Panel while it is up: (its step: 5 while you pick points, 9 once
         it is closing; the point the cursor is on, 0 to 21 row by row; the words +0x24 to +0x40 for
         the log), or None."""
         try:
@@ -877,7 +877,11 @@ class Game:
                 return None
             raw = self.mem.read(obj + 0x24, 0x1C)
             # (the point's number carries 0x80 from row 5 down)
-            return self.mem.u16(obj + 0x24), self.mem.u16(obj + 0x3A) & 0x7F, raw.hex()
+            # (+0x38 is 1 once Change points? is answered Yes: picking)
+            step = self.mem.u16(obj + 0x24)
+            if step == 4 and self.mem.u16(obj + 0x38) == 1:
+                step = 5        # (said as 5: picking points)
+            return step, self.mem.u16(obj + 0x3A) & 0x7F, raw.hex()
         except NotReady:
             return None
 
