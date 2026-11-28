@@ -948,7 +948,9 @@ class RoomList(PushMixin):
         if not real.get("connected"):
             return
         buttons = real["buttons"]
-        pressed = (buttons & ~self.pad_held) | self.take_latched()
+        # (a press the watcher caught that the last loop already saw - the button was down then -
+        # is not a second press: auto walk would start and stop at once)
+        pressed = (buttons & ~self.pad_held) | (self.take_latched() & ~self.pad_held)
         self.pad_held = buttons
         gp = getattr(self, "gate_pass", None)
         if gp and gp.get("phase") == "open" and ((pressed & ~L.LB) or abs(real["lx"]) > 12000 or abs(real["ly"]) > 12000):
