@@ -47,6 +47,9 @@ def metres(cm):
 # the control room are flat steps (a way started on them went down under them first).
 # The Training Facility Entrance: a slope under the floor by the railing (the way went down it, in
 # under the railing, and Billy walked into the railing) - and the lift was reached from behind.
+# Rooms whose second collision file has walls the first lacks, that stop you: the Outside Area's
+# fence across the path north of the gate (auto walk walked into it).
+A_WALL_ROOMS = {"ch00", "ch10"}
 LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any", "sh09": "any"}
 
 
@@ -58,6 +61,7 @@ class RoomList(PushMixin):
         self.picked = {}            # group -> the name and place last picked in it
         self.lb_mode = False
         self.pad_held = 0
+        self.start_latch()
         self.room_data = None
         self.room_for = None
         self.mesh = None
@@ -147,13 +151,14 @@ class RoomList(PushMixin):
             if key in ents:
                 tris = sbc.triangles(sbc.unpack(d, ents[key]))
                 self._tris_e = [tuple(tuple(c * MM for c in p) for p in t) for t in tris]
-                self.mesh = self.mesh_main = NavMesh(self._tris_e, ceilings=True)
-                self.apply_spots(self.mesh_main)
-                self.fix_door_heights()
                 key_a = "scene\\scr\\%sa" % name
                 if key_a in ents:
                     self._tris_a = [tuple(tuple(c * MM for c in p) for p in t)
                                     for t in sbc.triangles(sbc.unpack(d, ents[key_a]))]
+                walls_a = self._walls_of(self._tris_a) if name in A_WALL_ROOMS else []
+                self.mesh = self.mesh_main = NavMesh(self._tris_e + walls_a, ceilings=True)
+                self.apply_spots(self.mesh_main)
+                self.fix_door_heights()
                 if self.fix_step_heights():
                     self.apply_spots(self.mesh_main)
                 self.prepare_meshes()
@@ -904,12 +909,46 @@ class RoomList(PushMixin):
                 logging.info("picked up %s", t.name)
 
     # -- the controller -------------------------------------------------------------------
+    def start_latch(self):
+        """Watch the buttons on their own, a hundred times a second, and keep every press till the
+        loop gets to it: a quick tap while the loop is busy (finding a way round something) still
+        stops auto walk or moves in the list."""
+        if getattr(self, "_latch_thread", None):
+            return
+        self._latched = 0
+        self._latch_lock = threading.Lock()
+
+        def watch():
+            held = 0
+            while True:
+                try:
+                    r = self.link.real()
+                    b = r["buttons"] if r.get("connected") else 0
+                except Exception:
+                    b = 0
+                new = b & ~held
+                if new:
+                    with self._latch_lock:
+                        self._latched |= new
+                held = b
+                time.sleep(0.01)
+        self._latch_thread = threading.Thread(target=watch, daemon=True)
+        self._latch_thread.start()
+
+    def take_latched(self):
+        lock = getattr(self, "_latch_lock", None)
+        if lock is None:
+            return 0
+        with lock:
+            b, self._latched = self._latched, 0
+        return b
+
     def poll_controller(self):
         real = self.link.real()
         if not real.get("connected"):
             return
         buttons = real["buttons"]
-        pressed = buttons & ~self.pad_held
+        pressed = (buttons & ~self.pad_held) | self.take_latched()
         self.pad_held = buttons
         if self.walker.walking and not self.walker.guide:
             # touching the controller stops auto walk (the run button only makes it run)

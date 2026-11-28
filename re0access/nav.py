@@ -9,6 +9,7 @@ ground rises a little from one square to the next.
 """
 import heapq
 import math
+import time
 
 CELL = 150.0        # size of a grid square, in world units (millimetres)
 CLEARANCE = 330.0   # how far from a wall the player's middle has to stay
@@ -33,6 +34,8 @@ def _crosses(ax, az, bx, bz, cx, cz, dx, dz):
     d4 = side(ax, az, bx, bz, dx, dz)
     return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
 
+
+ROUTE_TIME = 0.35      # seconds one search for a way may take
 
 class NavMesh:
     def __init__(self, triangles, margin=300.0, clearance=CLEARANCE, up_only=False, ceilings=False):
@@ -551,6 +554,9 @@ class NavMesh:
         jumps = (getattr(self, "spot_jumps", None) or self.ledge_links()) if ledges else {}
         closest = (math.hypot(g[0] - s[0], g[1] - s[1]), s)
         visited = 0
+        # (a search that finds no way would look at the whole room - seconds in the Outside Area,
+        # with the controller unanswered all that while: it gives up after a short time instead)
+        deadline = time.monotonic() + ROUTE_TIME
         while heap:
             _, cur = heapq.heappop(heap)
             if cur == g:
@@ -560,7 +566,7 @@ class NavMesh:
             if left < closest[0]:
                 closest = (left, cur)
             visited += 1
-            if visited > 150000:
+            if visited > 150000 or (visited & 1023 == 0 and time.monotonic() > deadline):
                 break
             base = dist[cur]
             for dc, dr, cost in steps:
