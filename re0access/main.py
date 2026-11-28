@@ -616,6 +616,32 @@ class App(RoomList, ModMenu):
             else:
                 self.say(" ".join(map(str, nums)), interrupt=True)
 
+    def poll_door_dial(self):
+        """The dial on the combination lock (the Elevator Passage's door to Machine Room 1F): the
+        number it shows, said as you turn it, and again after "Please enter the second digit"."""
+        got = self.game.door_dial()
+        st = getattr(self, "door_dial_st", None)
+        now = time.monotonic()
+        if got is None:
+            if st and now - st["seen"] > 1.0:
+                self.door_dial_st = None
+            return
+        n, step = got
+        if st is None:
+            self.door_dial_st = {"n": n, "step": step, "seen": now, "again": now + 1.2}
+            return              # (the game's own words first: "Please enter the first digit" - then the number)
+        st["seen"] = now
+        if n != st["n"]:
+            st["n"] = n
+            st["again"] = None
+            self.say(str(n), interrupt=True)
+        if step != st["step"]:
+            st["step"] = step
+            st["again"] = now + 1.2         # (after the game asks for the next digit)
+        if st["again"] and now >= st["again"]:
+            st["again"] = None
+            self.say("Dial on %d. Left and right turn it, A puts the number in." % n, interrupt=False)
+
     def brake_words(self, st, key=None):
         total, target, n = st["sum"], st["target"], st["count"]
         if key is not None:
@@ -785,7 +811,7 @@ class App(RoomList, ModMenu):
         self.dead_seen = dead
 
     # (each loop, in this order)
-    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial']
+    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial', 'poll_door_dial']
 
     def run(self):
         self.say("Resident Access 0, version %s. Waiting for the game." % VERSION)

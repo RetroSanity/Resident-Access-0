@@ -78,6 +78,10 @@ VT_INGAME_MSG = 0x00CDE2E8     # uGUIInGameMessage, the message window: +0x284 4
 VT_DIALOG = 0x00CDA380        # uGUIDialog, the Start menu's "Quit?" question: +0x268 0 Yes, 1 No
 VT_DIAL = 0x00CE2870          # the combination dials (the Duralumin Case): +0x264 the dial picked (0 on the
                                # left), +0x27C, +0x280, +0x284 the numbers on them
+VT_DOOR_DIAL = 0x00CF4058     # the dial on the combination lock (the Elevator Passage's door to Machine Room
+                              # 1F): +0x8 2, then 4 once a digit is in, +0x10 the number it shows (Right
+                              # adds one), +0x14 its angle, +0x18 not 0 while it is up. Only ever one.
+DOOR_DIAL_AT = (0x00DCBFD0, 0x8AC)   # [[global] + off] is that dial
 VT_BRAKE = 0x00CD9698         # uGUIBrakePuzzle, the number pad behind the brake's card reader (up while it is)
 VT_MULTINUM = 0x00CE3820      # cGUIObjMultiNumTexture, a number drawn on screen: +0x114 its value; the
                               # pad's target and total are the two with 3 at +0x50
@@ -822,6 +826,23 @@ class Game:
             if pick > 2 or any(n > 9 for n in nums):
                 return None
             return pick, nums
+        except NotReady:
+            return None
+
+    def door_dial(self):
+        """(the number the combination lock's dial shows, its step) while it is up, or None."""
+        try:
+            g, off = DOOR_DIAL_AT
+            base = self.mem.u32(g)
+            if not base:
+                return None
+            d = self.mem.u32(base + off)
+            if not d or self.mem.u32(d) != VT_DOOR_DIAL or not self.mem.u32(d + 0x18):
+                return None
+            n = self.mem.u8(d + 0x10)
+            if n > 9:
+                return None
+            return n, self.mem.u32(d + 0x8)
         except NotReady:
             return None
 

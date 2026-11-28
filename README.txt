@@ -63,6 +63,9 @@ What it reads by itself
 - The combination dials (the Duralumin Case): when they come up, the numbers
   and which dial you are on; then the dial's name and number as you move
   (left, middle, right), and each new number as you turn it.
+- The combination lock on the door to Machine Room 1F (once the Dial is fitted):
+  the number the dial shows each time you turn it, and again after the game
+  asks for the next digit. The code is in the Leech Growth Records.
 - Pictures that carry a clue are described after their words: the Microfilm
   Image (and the projector showing both microfilms) says which number is on
   which seat of the conference room.
