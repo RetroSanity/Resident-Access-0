@@ -1335,7 +1335,11 @@ class RoomList(PushMixin):
         if gyy is None:
             gyy = gy * MM if gy is not None else y      # (no ground right there: the nearest at its height)
         extra = tuple(getattr(self, "walk_blocks", {}).get(self.scene, ())) + tuple(self.push_extra())
-        way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]), extra=extra, ledges=ledges)
+        mate = tuple(self.partner_extra(goal))
+        way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]), extra=extra + mate, ledges=ledges)
+        if way is None and mate:
+            # (no way round your partner: the way through where they stand - they may move)
+            way = self.mesh.route((p[0] * MM, y, p[2] * MM), (goal[0], gyy, goal[1]), extra=extra, ledges=ledges)
         self.plan_floor_ok = self.route_floors_ok(ledges)
         if way is None and gy is not None and abs(gy * MM - gyy) > 300:
             # (the ground right under it is lower, as water under a ladder's foot: the floor
@@ -1368,6 +1372,45 @@ class RoomList(PushMixin):
         if edy is not None and edy > 900.0 and not (ledges and getattr(m, "last_ledge", None)):
             return False
         return True
+
+    def partner_near(self, p):
+        """(name, (x, y, z) cm) of your partner, if in this room and on its floor, else None."""
+        try:
+            me = self.me()
+            for name, obj in self.game.characters():
+                if obj == me:
+                    continue
+                q = self.game.local_pos(obj)
+                if q and abs(q[1] - p[1]) < 150.0 and (not getattr(self, "mesh_main", None) or self.on_floor(q, 100.0)):
+                    return name, q
+        except NotReady:
+            pass
+        return None
+
+    def partner_extra(self, goal):
+        """Your partner as a circle for ways to keep round (they stand still while you walk past:
+        Rebecca at the foot of the step by the pressure pad). Not when they are what you walk to."""
+        p, _h = self.where_me()
+        pn = self.partner_near(p) if p else None
+        if not pn:
+            return ()
+        q = pn[1]
+        if math.hypot(q[0] * MM - goal[0], q[2] * MM - goal[1]) < 1200.0 or \
+                math.hypot(q[0] - p[0], q[2] - p[2]) < 60.0:
+            return ()
+        return ((q[0] * MM, q[1] * MM, q[2] * MM, 300.0),)
+
+    def partner_in_way(self, p, h):
+        """Your partner's name if they stand just ahead of you (within a metre and a half)."""
+        pn = self.partner_near(p)
+        if not pn:
+            return None
+        q = pn[1]
+        d = math.hypot(q[0] - p[0], q[2] - p[2])
+        if d > 150.0:
+            return None
+        ahead = abs(angle_diff(math.atan2(q[0] - p[0], q[2] - p[2]), h)) < math.radians(70)
+        return pn[0] if ahead or d < 80.0 else None
 
     def learn_block(self, p, h):
         """Walked into something the walk map does not have (a statue, a way the game keeps shut
@@ -1478,7 +1521,12 @@ class RoomList(PushMixin):
             pts = [(p[0] * MM, p[2] * MM)] + list(w or [])
             return sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts, pts[1:]))
         joined = self.plan_joined
-        if (way is None or self.plan_ledge or not joined or far(way) or doorish) and \
+        # (a room whose main map has the second file's walls too - the Outside Area - has the
+        # whole of it there: the other maps lack things that stop you, so they are only for when
+        # the main one has no way)
+        whole = bool(rd0) and rd0.code in A_WALL_ROOMS and self.mesh is getattr(self, "mesh_main", None) \
+            and way is not None and joined and not far(way)
+        if not whole and (way is None or self.plan_ledge or not joined or far(way) or doorish) and \
                 (way is None or doorish or abs(gy - p[1]) > 100.0):
             # (the map picked may not reach it: standing in a doorway the main map walls off, or
             # stairs only the second collision file has whole - the Main Hall's; try the others:
@@ -2192,8 +2240,8 @@ class RoomList(PushMixin):
             self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
             return
         elif res in ("replan", "bump"):
-            if res == "bump":
-                self.learn_block(p, h)
+            if res == "bump" and not self.partner_in_way(p, h):
+                self.learn_block(p, h)      # (your partner moves: not learnt as something in the way)
             goal = (self.walker.goal[1], self.walker.goal[2])
             way = self.plan(p, goal, getattr(self, "walk_gy", None))
             if way:
@@ -2205,4 +2253,9 @@ class RoomList(PushMixin):
             self.turning = (math.atan2(t.pos[0] - p[0], t.pos[2] - p[2]), time.monotonic() + 3.0, t)
             return
         elif res in ("blocked", "gave up"):
-            self.stop_walk("Something is in the way. " + (self.thing_words(t) if t else ""))
+            who = self.partner_in_way(p, h)
+            if who:
+                self.stop_walk("%s is in the way. The right bumper tells %s to wait or follow. %s" % (
+                    who, "her" if who == "Rebecca" else "him", self.thing_words(t) if t else ""))
+            else:
+                self.stop_walk("Something is in the way. " + (self.thing_words(t) if t else ""))
