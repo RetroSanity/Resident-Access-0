@@ -29,7 +29,13 @@ CHECK_NAMES = [
 ]
 # (room: (typewriter x, z, stand x, z, facing) cm)
 # Names for things whose own words do not say what they are: (room, zone) -> name.
+# (checks that are where an item goes, though they ask nothing: listed under Puzzles)
+PUZZLE_ZONES = {("ch06", 2)}
 ZONE_NAMES = {
+    # (the Leech Laboratory: the gas pump for the chamber next door takes the Sterilizing Agent
+    # from the Morgue - "The sterilizing agent has been set into place")
+    ("ch06", 2): "Gas pump, put the Sterilizing Agent here",
+    ("ch06", 6): "Tank of bio-organic fluid",
     # (the Elevator Passage: the button on the Corridor above opens the wall below; the same panel
     # takes a four-digit code once the Dial is fitted)
     ("ch04", 8): "Button and code panel",
@@ -379,7 +385,8 @@ class RoomData:
                     # (one that asks you something - reconnect the cable? press the button? - is
                     # a puzzle or a machine to work, not just something to look at)
                     puzzle = any("<SEL" in texts[m] for m in msgs) or index in use_zones or \
-                        "if you had" in low     # ("If you had some microfilm, you could view it": an item goes here)
+                        "if you had" in low or \
+                        (self.base_code, index) in PUZZLE_ZONES  # ("If you had some microfilm...": an item goes here)
                     # a box as wide as the room (a whole-room message) is not a place to walk to
                     area = (hi[0] - lo[0]) * (hi[2] - lo[2])
                     if area > 600 * 600 or (len(parts) > 1 and area > 250 * 250):

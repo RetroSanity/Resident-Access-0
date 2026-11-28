@@ -1964,7 +1964,8 @@ class RoomList(PushMixin):
         return math.atan2(vx, vz)
 
     ITEM_REACH = 12.0   # (cm: how near an item the point A looks at has to be)
-    TABLE_REACH = 35.0  # (cm: the same for an item up on a table or a shelf)
+    TABLE_REACH = 45.0  # (cm: the same for an item up on a table or a shelf - the Operating Room's
+                        # spray beside the overturned table is taken with A pointing 41 cm from it)
     REACH = 520.0       # (mm: the game's A looks for a thing to check about this far in front of you)
 
     def outline_of(self, t):
@@ -2358,6 +2359,14 @@ class RoomList(PushMixin):
             # (walked into something right by the thing: turning on the spot reaches it)
             self.walker.stop()
             self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
+            return
+        elif res in ("bump", "blocked", "gave up") and t is not None and t.kind == "item" and \
+                math.hypot(t.pos[0] - p[0], t.pos[2] - p[2]) < 110.0 and \
+                t.pos[1] - p[1] > 40.0:
+            # (an item up on furniture you cannot get round: stopped against it near enough - turn
+            # straight at it there; A takes it from further than the walk map lets you stand)
+            self.walker.stop()
+            self.turning = (math.atan2(t.pos[0] - p[0], t.pos[2] - p[2]), time.monotonic() + 3.0, t)
             return
         elif res in ("bump", "blocked", "gave up") and t is not None and self.gate_ahead(p) is not None:
             # (walked into the Outside Area's gate while it is still locked: A at it unlocks it -
