@@ -59,7 +59,7 @@ EXTRA_ZONES = {
 }
 HOOKSHOT_KIND = 0x1E       # an entry for using the Hookshot in a zone (it takes you up to another room)
 # (room, zone) -> what it is, where its words do not say (the library's: "the camera moves to a
-# large hole in the ceiling" as you walk under it; its zone is a bookshelf's)
+# large hole in the ceiling" as you walk under it)
 HOOKSHOT_NAMES = {("ch0d", 5): "Hole in the ceiling"}
 # (rooms whose script has the place before it is there: the Church before the bat breaks the roof,
 # ch01, and during the fight, ch11; after it the Church is ch1f)
@@ -237,6 +237,16 @@ class RoomData:
         key = "scene\\event\\%sb" % code
         if key in ents:
             zones = _zones(sbc.unpack(d, ents[key]))
+        # (the areas the Hookshot is used in are numbered in another file, the camera areas: the
+        # library's is by the east bookshelf, where the camera turns to the hole - not the shelf
+        # that has the same number in the first file)
+        hook_zones = {}
+        key_c = "scene\\event\\%sc" % code
+        if key_c in ents:
+            try:
+                hook_zones = _zones(sbc.unpack(d, ents[key_c]))
+            except Exception:
+                hook_zones = {}
         script = None
         scode = code
         self.base_code = code
@@ -396,7 +406,7 @@ class RoomData:
         # Hookshot from your items, not A.
         if script:
             for kind, off, index in script.entries:
-                if kind != HOOKSHOT_KIND or index not in zones or code in HOOKSHOT_NOT_YET:
+                if kind != HOOKSHOT_KIND or index not in hook_zones or code in HOOKSHOT_NOT_YET:
                     continue
                 to = script.doors(off)
                 if not to:
@@ -411,13 +421,14 @@ class RoomData:
                 what = "Hole in the roof" if "get up there" in low else "Place to use the Hookshot"
                 what = HOOKSHOT_NAMES.get((self.base_code, index), what)
                 name = what + ("" if "Hookshot" in what else ", use the Hookshot here") + where
-                lo, hi = _box(zones[index])
+                hz = hook_zones[index]
+                lo, hi = _box(hz)
+                lo = (lo[0], min(max(lo[1], floor - 20.0), hi[1]), lo[2])   # (the camera area is tall)
                 centre = ((lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2)
-                th = Thing("check", name, centre, (lo, hi), zone=index, says=[], puzzle=True, stand=True,
-                           outline=_footprint(zones[index]), hookshot=True)
+                th = Thing("check", name, centre, (lo, (hi[0], lo[1] + 20.0, hi[2])), zone=None, says=[],
+                           puzzle=True, stand=True, outline=_footprint(hz), hookshot=True)
                 th.pad_words = "Here. Open your items and use the Hookshot."
                 self.things.append(th)
-                used.add(index)
         for (code_, index), (kind_, name_) in EXTRA_ZONES.items():
             if code_ == self.base_code and index in zones and index not in used:
                 lo, hi = _box(zones[index])
