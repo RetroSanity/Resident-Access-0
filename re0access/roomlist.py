@@ -50,6 +50,9 @@ def metres(cm):
 # Rooms whose second collision file has walls the first lacks, that stop you: the Outside Area's
 # fence across the path north of the gate (auto walk walked into it).
 A_WALL_ROOMS = {"ch00", "ch10"}
+# (rooms whose stairs only the second collision file has whole: the main one walls them off at
+# both ends - the Factory Platform's steep stairs up to the Turntable Yard door)
+A_ONLY_ROOMS = {"bt00", "bt05"}
 LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any", "sh09": "any"}
 
 
@@ -1227,6 +1230,8 @@ class RoomList(PushMixin):
                 try:
                     if key == "floors":
                         m = NavMesh(tris_e + tris_a, up_only=True)
+                    elif key == "a_only":
+                        m = NavMesh(tris_a, clearance=200.0, ceilings=True) if tris_a else False
                     elif key == "fine":
                         # (with the walls of the second collision file too: the counter round the Main
                         # Hall's typewriter is only there)
@@ -1645,7 +1650,8 @@ class RoomList(PushMixin):
             # a way on foot that gets there first, then one over an edge, then what there was)
             picked = self.mesh
             tries = [(picked, way, self.plan_ledge, joined)]
-            for m in [getattr(self, "mesh_main", None), self.alt_mesh(200.0), self.alt_mesh(120.0)]:
+            more = [self.cached_mesh("a_only")] if rd0 and rd0.code in A_ONLY_ROOMS else []
+            for m in [getattr(self, "mesh_main", None), self.alt_mesh(200.0), self.alt_mesh(120.0)] + more:
                 if m and m is not picked:
                     self.mesh = m
                     w = self.plan(p, goal, gy)
