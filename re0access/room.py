@@ -289,8 +289,12 @@ class RoomData:
                             # from the far side)
                             name = "Gate" + (", locked from the other side" if "other side" in low else "")
                         name = ZONE_NAMES.get((self.base_code, index), name)
-                        if any(o.kind == "door" and o.name == name and
-                               math.hypot(o.pos[0] - centre[0], o.pos[2] - centre[2]) < 100.0 for o in self.things):
+                        twin = next((o for o in self.things if o.kind == "door" and o.name == name and
+                                     math.hypot(o.pos[0] - centre[0], o.pos[2] - centre[2]) < 100.0), None)
+                        if twin is not None:
+                            if name.startswith("Gate"):
+                                # (a gate has a zone on each side: you press A on your own side)
+                                twin.sides = getattr(twin, "sides", [twin.box]) + [(lo, hi)]
                             used.add(index)
                             continue        # (the other half of the same double door)
                         self.things.append(Thing("door", name, centre, (lo, hi), target=target, zone=index, says=msgs))

@@ -950,6 +950,10 @@ class RoomList(PushMixin):
         buttons = real["buttons"]
         pressed = (buttons & ~self.pad_held) | self.take_latched()
         self.pad_held = buttons
+        gp = getattr(self, "gate_pass", None)
+        if gp and gp.get("phase") == "open" and ((pressed & ~L.LB) or abs(real["lx"]) > 12000 or abs(real["ly"]) > 12000):
+            self.gate_pass = None       # (you took over at the gate)
+            self.walker.hold(set())
         if self.walker.walking and not self.walker.guide:
             # touching the controller stops auto walk (the run button only makes it run)
             moved = abs(real["lx"]) > 12000 or abs(real["ly"]) > 12000
@@ -1431,16 +1435,118 @@ class RoomList(PushMixin):
         logging.info("walk: learnt something in the way at %.0f,%.0f", bx / MM, bz / MM)
         return True
 
+    def gate_side(self, g, p):
+        """The gate as seen from where you are: its zone on your side, faced across to the other.
+        (The Outside Area's gate has a zone each side; only the one you stand in opens it.)"""
+        sides = getattr(g, "sides", None)
+        if not sides or len(sides) < 2:
+            return g
+        def mid(b):
+            return ((b[0][0] + b[1][0]) / 2, b[0][1], (b[0][2] + b[1][2]) / 2)
+        sides = sorted(sides, key=lambda b: math.hypot(mid(b)[0] - p[0], mid(b)[2] - p[2]))
+        near, far = sides[0], sides[1]
+        g2 = copy.copy(g)
+        (x0, y0, z0), (x1, y1, z1) = near
+        nm, fm = mid(near), mid(far)
+        # (stand inside your side's zone, near the gate, and face through it)
+        dx, dz = fm[0] - nm[0], fm[2] - nm[2]
+        ln = math.hypot(dx, dz) or 1.0
+        g2.pos = (nm[0] + dx / ln * 10.0, nm[1], nm[2] + dz / ln * 10.0)
+        g2.box = near
+        g2.face = math.atan2(dx, dz)
+        g2.stand = True
+        g2.gate_of = g
+        return g2
+
+    def gate_ahead(self, p):
+        """The gate you are up against (within a metre of it), or None (not twice in 20 seconds).
+        From the south it opens with A each time; from the north it is walked through."""
+        if time.monotonic() - getattr(self, "gate_tried", -99.0) < 20.0:
+            return None
+        rd = self.room_data
+        if not rd:
+            return None
+        for g in rd.things:
+            if g.kind == "door" and g.name.startswith("Gate") and getattr(g, "box", None):
+                for b in getattr(g, "sides", None) or [g.box]:
+                    if self.box_gap(b, p) < 100.0:
+                        return g
+        return None
+
+    def poll_gate(self):
+        """Going through the gate for you on the way somewhere: at it, A, and once on the other
+        side, on to where you were going."""
+        gp = getattr(self, "gate_pass", None)
+        if not gp or gp.get("phase") != "open":
+            return
+        now = time.monotonic()
+        obj = self.me()
+        p = self.game.local_pos(obj) if obj else None
+        if not p:
+            return
+        if gp.get("unlock"):
+            if gp["presses"] == 0:
+                gp["presses"] = 1
+                gp["release"] = now + 0.25
+                gp["next"] = now + 2.0
+                self.walker.hold({"a"})
+            elif now > gp["release"] and now < gp["next"]:
+                self.walker.hold(set())
+            elif now >= gp["next"]:
+                then = gp["then"]
+                self.gate_pass = None
+                logging.info("gate opened: on to %s", then.name)
+                self.target = then
+                self.start_walk(target=then)
+            return
+        if math.hypot(p[0] - gp["from"][0], p[2] - gp["from"][2]) > 120.0:
+            # (through: the gate puts you on its other side)
+            then = gp["then"]
+            self.gate_pass = None
+            self.walker.hold(set())
+            logging.info("through the gate: on to %s", then.name)
+            self.target = then
+            self.start_walk(target=then)
+            return
+        if now < gp["next"]:
+            if gp.get("a_at") and now >= gp["a_at"]:
+                gp["a_at"] = None
+                gp["release"] = now + 0.25
+                self.walker.hold({"a"})
+            elif now > gp["release"]:
+                self.walker.hold(set())
+            return
+        if gp["presses"] >= 3:
+            self.gate_pass = None
+            self.walker.hold(set())
+            self.stop_walk("At the gate. Press A, then auto walk again.")
+            return
+        gp["presses"] += 1
+        g = getattr(self, "walk_target", None)
+        inside = g is not None and getattr(g, "box", None) is not None and self.in_box(g.box, p, -5.0)
+        if inside:
+            gp["a_at"] = now
+            gp["release"] = now + 0.25
+        else:
+            # (the walk stops short of the gate - the walk map keeps off its bars: a step on, into
+            # the place where A opens it, then A)
+            gp["release"] = now + 0.35
+            gp["a_at"] = now + 0.45
+            self.walker.hold({"up"})
+        gp["next"] = now + 3.0
+
     def gate_on_way(self, t, p, way):
         """A gate (a door into another part of the same room) the way goes through, or None."""
         rd = self.room_data
-        if not rd or t.kind == "door" and t.name.startswith("Gate"):
+        if not rd or t.kind == "door" and t.name.startswith("Gate") or getattr(t, "gate_of", None) is not None:
             return None
         pts = [(p[0] * MM, p[2] * MM)] + list(way or [])
         for g in rd.things:
             if g.kind != "door" or not g.name.startswith("Gate") or not getattr(g, "box", None):
                 continue
-            (x0, _y0, z0), (x1, _y1, z1) = g.box
+            boxes = getattr(g, "sides", None) or [g.box]
+            x0 = min(b[0][0] for b in boxes); x1 = max(b[1][0] for b in boxes)
+            z0 = min(b[0][2] for b in boxes); z1 = max(b[1][2] for b in boxes)
             pad = 30.0
             x0, x1, z0, z1 = (x0 - pad) * MM, (x1 + pad) * MM, (z0 - pad) * MM, (z1 + pad) * MM
             for a, b in zip(pts, pts[1:]):
@@ -1464,6 +1570,10 @@ class RoomList(PushMixin):
 
     def _start_walk(self, guide=False, target=None):
         t = target or self.current_target()
+        if t is not None and getattr(t, "sides", None) and getattr(t, "gate_of", None) is None:
+            p0, _h0 = self.where_me()
+            if p0:
+                t = self.gate_side(t, p0)
         if t is None:
             self.say("Pick something in the list first.", interrupt=True)
             return
@@ -1559,15 +1669,6 @@ class RoomList(PushMixin):
         if way is None:
             far = (", it's downstairs" if p[1] - gy > 150 else ", it's upstairs" if gy - p[1] > 150 else "")
             self.say("No way there from here%s." % far, interrupt=True)
-            return
-        gate = self.gate_on_way(t, p, way)
-        if gate is not None:
-            # (a gate within the room - the Outside Area's: the walking map goes straight through it,
-            # but it is a door, gone through with A. Walk to it first)
-            logging.info("walk to %s: through %s first", t.name, gate.name)
-            self.target = gate
-            self.start_walk(guide=guide, target=gate)
-            self.say("The way is through the gate. Press A at it, then auto walk again.", interrupt=False)
             return
         via = way[:-1] if way else []
         end = way[-1] if way else goal
@@ -2036,6 +2137,20 @@ class RoomList(PushMixin):
 
     def stop_walk(self, words=None):
         t = getattr(self, "walk_target", None)
+        gp = getattr(self, "gate_pass", None)
+        if gp and gp.get("phase") == "walk":
+            if words and words.startswith(("Here", "On the")) and t is not None and getattr(t, "gate_of", None):
+                # (at the gate, facing through it: A for you - poll_gate)
+                self.settling = None
+                if getattr(self, "beeps", None):
+                    self.beeps.quiet()
+                self.walker.stop()
+                self.link.stick = None
+                p, _h = self.where_me()
+                gp.update(phase="open", presses=0, next=0.0, release=0.0, **{"from": p or (0, 0, 0)})
+                self.say("Opening the gate.", interrupt=True)
+                return
+            self.gate_pass = None       # (stopped, or could not get there: no going through)
         if words and words.startswith(("Here", "On the")) and t is not None and getattr(t, "pad_words", None):
             words = t.pad_words     # (a pressure pad: stood on, nothing to press; the Hookshot's place)
         self.settling = None
@@ -2095,6 +2210,9 @@ class RoomList(PushMixin):
         self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
 
     def poll_walk(self):
+        if getattr(self, "gate_pass", None) and self.gate_pass.get("phase") == "open":
+            self.poll_gate()
+            return
         if (getattr(self, "settling", None) or getattr(self, "turning", None)) and \
                 self.scene != getattr(self, "walk_scene", self.scene):
             # (gone through: stairs you walk onto take you to the next room while auto walk is
@@ -2238,6 +2356,17 @@ class RoomList(PushMixin):
             # (walked into something right by the thing: turning on the spot reaches it)
             self.walker.stop()
             self.turning = (self.reach_facing(t, p), time.monotonic() + 3.0, t)
+            return
+        elif res in ("bump", "blocked", "gave up") and t is not None and self.gate_ahead(p) is not None:
+            # (walked into the Outside Area's gate while it is still locked: A at it unlocks it -
+            # "The door is now unlocked" - then on; once open it is walked through)
+            g = self.gate_ahead(p)
+            self.gate_tried = time.monotonic()  # (once per walk: a second bump there is something else)
+            self.walker.stop()
+            self.gate_pass = {"then": t, "phase": "open", "unlock": True, "presses": 0, "next": 0.0,
+                              "release": 0.0, "from": p, "gate": g}
+            logging.info("walked into %s: A to open it", g.name)
+            self.say("Opening the gate.", interrupt=True)
             return
         elif res in ("replan", "bump"):
             if res == "bump" and not self.partner_in_way(p, h):
