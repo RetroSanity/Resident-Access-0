@@ -1967,6 +1967,7 @@ class RoomList(PushMixin):
     ITEM_REACH = 12.0   # (cm: how near an item the point A looks at has to be)
     TABLE_REACH = 45.0  # (cm: the same for an item up on a table or a shelf - the Operating Room's
                         # spray beside the overturned table is taken with A pointing 41 cm from it)
+    FLOOR_REACH = 400.0  # (mm: where A looks for an item on the floor, in front of you)
     RAISED_NEAR = 780.0  # (mm: how near an item up on something you have to stand)
     REACH = 520.0       # (mm: the game's A looks for a thing to check about this far in front of you)
 
@@ -2051,7 +2052,11 @@ class RoomList(PushMixin):
 
     def can_reach(self, t, x, z, rot):
         """True if the point the game's A looks at (from x, z mm facing rot) is in the thing's outline."""
-        fx, fz = x + math.sin(rot) * self.REACH, z + math.cos(rot) * self.REACH
+        reach = self.REACH
+        if t.kind == "item" and not getattr(t, "raised", False) and not getattr(t, "via_check", False):
+            reach = self.FLOOR_REACH    # (on the floor: the game looks nearer your feet - the
+                                        # Output Reg. Coil the monkey pulled out, missed from a step back)
+        fx, fz = x + math.sin(rot) * reach, z + math.cos(rot) * reach
         if getattr(t, "raised", False):
             # (up on something: the game gives it to you only from within about 80 cm of it and
             # facing it - the Breeding Room Key on the gas injector, where A from farther off
