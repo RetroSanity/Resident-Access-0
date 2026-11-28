@@ -744,7 +744,7 @@ class App(RoomList, ModMenu):
         if item in self.GUNS:
             return "%s, %d %s" % (words, amount, "round" if amount == 1 else "rounds")
         if amount > 1 or "Ammo" in words or "Grenade" in words:
-            return "%s, %d" % (words, amount)
+            return "%s, %d%s" % (words, amount, ", full" if amount >= 255 else "")
         return words
 
     def with_amount(self, words):
@@ -769,9 +769,7 @@ class App(RoomList, ModMenu):
                 if 0 < item < len(names) and names[item] == words:
                     if item in self.GUNS:
                         return "%s, %d %s" % (words, amount, "round" if amount == 1 else "rounds")
-                    if amount > 1 or "Ammo" in words or "Grenade" in words:
-                        return "%s, %d" % (words, amount)
-                    return words
+                    return self.amount_words(words, item, amount)
         return words
 
     # -- controller keys ---------------------------------------------------------------------
