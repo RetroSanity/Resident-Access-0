@@ -80,6 +80,7 @@ VT_DIAL = 0x00CE2870          # the combination dials (the Duralumin Case): +0x2
                                # left), +0x27C, +0x280, +0x284 the numbers on them
 VT_FLOOR_PANEL = 0x00CD3AAC   # the Factory Elevator's "Select a floor" panel: +0x78 how many floors, +0x80
                               # the one picked (0 for Lv1; Right goes up one)
+FLOOR_PANEL_AT = (0x00E2DAA4, 0x3B0, 0x220)  # [[global] + 0x3B0] + 0x220 is that panel
 VT_DOOR_DIAL = 0x00CF4058     # the dial on the combination lock (the Elevator Passage's door to Machine Room
                               # 1F): +0x8 2, then 4 once a digit is in, +0x10 the number it shows (Right
                               # adds one), +0x14 its angle, +0x18 not 0 while it is up. Only ever one.
@@ -850,18 +851,15 @@ class Game:
             return None
 
     def floor_panel(self):
-        """(the floor picked, 0 for Lv1; how many) on the elevator's floor panel, or None (found
-        in the background the first time)."""
+        """(the floor picked, 0 for Lv1; how many) on the elevator's floor panel, or None."""
         try:
-            obj = getattr(self, "_floor_obj", None)
+            base = self.mem.u32(FLOOR_PANEL_AT[0])
+            holder = self.mem.u32(base + FLOOR_PANEL_AT[1]) if base else 0
+            obj = holder + FLOOR_PANEL_AT[2] if holder else 0
             if not obj or self.mem.u32(obj) != VT_FLOOR_PANEL:
-                self._floor_obj = None
-                found = self.run_cached(lambda: self.find_objects(VT_FLOOR_PANEL, limit=1), "_floor_tried", 2.0)
-                if not found:
-                    return None
-                obj = self._floor_obj = found[0]
+                return None
             cur, count = self.mem.u32(obj + 0x80), self.mem.u32(obj + 0x78)
-            if not 0 < count <= 8 or not 0 <= cur < count:
+            if not 2 <= count <= 8 or not 0 <= cur < count:
                 return None
             return cur, count
         except NotReady:

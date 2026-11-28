@@ -156,8 +156,8 @@ class App(RoomList, ModMenu):
                                                                 "Hour hand OK", "Minute hand OK")]
         words = [T.clean(raw) for _, _, raw in batch]
         if any(w.startswith("Select a floor") for w in words):
-            self.floor_at = now             # (the Factory Elevator's floor panel: poll_floor)
-            self.floor_was = None
+            self.lift_panel_at = now        # (the Factory Elevator's floor panel: poll_floor)
+            self.lift_panel_was = None
         if "Continue" in words and "Restart" in words:
             # (a slot picked on the load list: Continue / Restart / Back, the cursor a picture)
             self.load_choices = ["Continue", "Restart", "Back"]
@@ -628,18 +628,24 @@ class App(RoomList, ModMenu):
     def poll_floor(self):
         """The Factory Elevator's "Select a floor" panel: the floor picked as you move along it."""
         now = time.monotonic()
-        if now - getattr(self, "floor_at", -99.0) > 120.0:
+        if now - getattr(self, "lift_panel_at", -99.0) > 120.0:
             return
         got = self.game.floor_panel()
         if got is None:
             return
         cur, count = got
-        was = getattr(self, "floor_was", None)
+        was = getattr(self, "lift_panel_was", None)
+        ab = self.link.real().get("buttons", 0) & (L.A | L.B)
+        held = getattr(self, "lift_panel_ab", 0)
+        self.lift_panel_ab = ab
+        if was is not None and ab & ~held:
+            self.lift_panel_at = -99.0      # (a floor picked, or B: the panel is gone, and its pick
+            return                          # goes back to Lv1 without anyone moving it)
         if cur == was:
             return
-        if was is None and now - self.floor_at < 1.0:
+        if was is None and now - self.lift_panel_at < 1.0:
             return              # (after the game's own words: "Select a floor. Lv1 Lv2 Lv3 Lv4")
-        self.floor_was = cur
+        self.lift_panel_was = cur
         where = self.FLOORS.get(cur) if count == 4 else None
         self.say("Lv%d%s" % (cur + 1, ", " + where if where else ""), interrupt=was is not None)
 
