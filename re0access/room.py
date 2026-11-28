@@ -30,6 +30,8 @@ CHECK_NAMES = [
 # (room: (typewriter x, z, stand x, z, facing) cm)
 # Names for things whose own words do not say what they are: (room, zone) -> name.
 # (checks that are where an item goes, though they ask nothing: listed under Puzzles)
+TWO_FLOOR_LIFTS = {("bt02", 5): (("Small lift down to the lower walkway", 4300.0),
+                                   ("Small lift up to the top floor", 4005.0))}
 PUZZLE_ZONES = {("ch06", 2), ("ch05", 6), ("ch17", 6), ("ch18", 6), ("ch19", 6)}
 ZONE_NAMES = {
     # (the Leech Laboratory: the gas pump for the chamber next door takes the Sterilizing Agent
@@ -513,6 +515,21 @@ class RoomData:
                 self.things.append(Thing("check", "Lift", centre, (lo, hi), zone=index, says=[], puzzle=True,
                                          stand=True, outline=_footprint(zones[index])))
                 used.add(index)
+        # A lift between two floors of one room (the Turntable Yard's small one, down to the lower
+        # walkway): listed once on each floor, with which way it goes
+        for (code, index), floors in TWO_FLOOR_LIFTS.items():
+            if self.base_code != code or index not in zones:
+                continue
+            self.things = [th for th in self.things if getattr(th, "zone", None) != index]
+            lo, hi = _box(zones[index])
+            for name, y in floors:
+                th = Thing("check", name, ((lo[0] + hi[0]) / 2, y, (lo[2] + hi[2]) / 2),
+                           ((lo[0], y - 10.0, lo[2]), (hi[0], y + 10.0, hi[2])), zone=None, says=[],
+                           puzzle=True, stand=True, outline=_footprint(zones[index]))
+                th.pad_words = ("On the lift. Press A to ride it. It carries one person, so your "
+                                "partner stays behind.")
+                self.things.append(th)
+            used.add(index)
         self.items = load_items(game_dir, scene_no, table)
         for it in self.items:
             self.things.append(it)
