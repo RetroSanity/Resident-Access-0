@@ -162,7 +162,21 @@ ROOM_NAMES = {
     "ch01": "Church", "ch11": "Church", "ch1f": "Church",
     "ch0f": "Church Back Room",
     "ch02": "Church Roof",
-    "ch20": "Elevator Passage",
+    "ch20": "Elevator",
+    # (below: the Laboratory proper, by Evil Resource's names, matched by doors and contents. The
+    # Elevator Passage is two floors in one: the Corridor of B1 runs round above it)
+    "ch04": "Elevator Passage",
+    "ch03": "Machine Room 1F", "ch13": "Machine Room 1F", "ch14": "Machine Room 1F", "ch15": "Machine Room 1F",
+    "ch05": "Machine Room 2F", "ch17": "Machine Room 2F", "ch18": "Machine Room 2F", "ch19": "Machine Room 2F",
+    "ch06": "Leech Laboratory",
+    "ch07": "Marcus's Private Room",
+    "ch08": "Operating Room",
+    "ch09": "Morgue",
+    "ch0a": "Breeding Room",
+    "ch0b": "Leech Room", "ch1b": "Leech Room",
+    "ch0c": "Cable Car", "ch1c": "Cable Car", "ch1d": "Cable Car",
+    "ch0d": "Reference Room",
+    "ch0e": "Marcus's Study",
 }
 
 

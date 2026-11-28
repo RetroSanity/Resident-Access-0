@@ -30,6 +30,10 @@ CHECK_NAMES = [
 # (room: (typewriter x, z, stand x, z, facing) cm)
 # Names for things whose own words do not say what they are: (room, zone) -> name.
 ZONE_NAMES = {
+    # (the Elevator Passage: the button on the Corridor above opens the wall below; the same panel
+    # takes a four-digit code once the Dial is fitted)
+    ("ch04", 8): "Button and code panel",
+    ("ch04", 15): "Railing over the collapsed stairs",
     ("dm0a", 1): "Locked locker, needs the Locker Key",     # (the Training Room's, upstairs: "It's locked.")
     ("dm0a", 3): "Red button, starts a fight with Hunters",  # ("Press the button?": Battle sequence initiated)
     # (the Statue Room's six statues, each named after the riddle on it)
