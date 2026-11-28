@@ -78,6 +78,8 @@ VT_INGAME_MSG = 0x00CDE2E8     # uGUIInGameMessage, the message window: +0x284 4
 VT_DIALOG = 0x00CDA380        # uGUIDialog, the Start menu's "Quit?" question: +0x268 0 Yes, 1 No
 VT_DIAL = 0x00CE2870          # the combination dials (the Duralumin Case): +0x264 the dial picked (0 on the
                                # left), +0x27C, +0x280, +0x284 the numbers on them
+VT_FLOOR_PANEL = 0x00CD3AAC   # the Factory Elevator's "Select a floor" panel: +0x78 how many floors, +0x80
+                              # the one picked (0 for Lv1; Right goes up one)
 VT_DOOR_DIAL = 0x00CF4058     # the dial on the combination lock (the Elevator Passage's door to Machine Room
                               # 1F): +0x8 2, then 4 once a digit is in, +0x10 the number it shows (Right
                               # adds one), +0x14 its angle, +0x18 not 0 while it is up. Only ever one.
@@ -108,7 +110,7 @@ ENEMY_VTS = {0xCBDCD8: 0x10, 0xCC4F28: 0x11, 0xCC50A0: 0x12, 0xCC5218: 0x14, 0xC
              0xCC3248: 0x46, 0xCC3710: 0x47, 0xCC5DD8: 0x50, 0xCC5F50: 0x51, 0xCC60C8: 0x5A, 0xCC6240: 0x5B,
              0xCC63B8: 0x6A, 0xCC6530: 0x6B}
 ZOMBIES = {0x10, 0x11, 0x12, 0x14, 0x15, 0x16, 0x17, 0x19, 0x1A, 0x50, 0x51, 0x5A, 0x5B, 0x6A, 0x6B}
-ENEMY_NAMES = {0x2F: "Hunter", 0x35: "Bat", 0x3C: "Giant bat", 0x34: "Spider", 0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
+ENEMY_NAMES = {0x2F: "Hunter", 0x37: "Proto-Tyrant", 0x35: "Bat", 0x3C: "Giant bat", 0x34: "Spider", 0x2A: "Cerberus", 0x31: "Stinger", 0x3A: "Giant Centipede", 0x43: "Humanoid leech", 0x44: "Humanoid leech", 0x40: "Leech", 0x41: "Leech", 0x42: "Leech"}
 
 
 def enemy_name(kind):
@@ -117,6 +119,7 @@ def enemy_name(kind):
     return ENEMY_NAMES.get(kind, "Enemy")
 
 
+WAITING = 0xFC8             # in an enemy: 2 while it is there but not yet in play, 0 once it is
 POS = 0x40                    # in any unit: x, y, z (floats, centimetres)
 MATRIX = 0x70                 # in any unit: its world matrix, 4 rows of 4 floats (the last row is the position)
 
@@ -629,6 +632,17 @@ class Game:
                 continue
             if off:
                 x, y, z = x - off[0], y - off[1], z - off[2]
+            try:
+                waiting = self.mem.u32(obj + WAITING) == 2
+            except NotReady:
+                waiting = False
+            if waiting and hp > 0:
+                seen = self.__dict__.setdefault("_waiting_said", set())
+                if obj not in seen:
+                    seen.add(obj)
+                    logging.info("enemy %s (kind %#x) at %.0f,%.0f not yet in play: left out", hex(obj), kind, x, z)
+                continue    # (there but not yet in play: the Proto-Tyrant in every Factory room before
+                            # its fight, the Hunters before they jump you)
             fell = gone.get(obj)
             if hp <= 0:
                 if fell is None:
@@ -832,6 +846,24 @@ class Game:
             if pick > 2 or any(n > 9 for n in nums):
                 return None
             return pick, nums
+        except NotReady:
+            return None
+
+    def floor_panel(self):
+        """(the floor picked, 0 for Lv1; how many) on the elevator's floor panel, or None (found
+        in the background the first time)."""
+        try:
+            obj = getattr(self, "_floor_obj", None)
+            if not obj or self.mem.u32(obj) != VT_FLOOR_PANEL:
+                self._floor_obj = None
+                found = self.run_cached(lambda: self.find_objects(VT_FLOOR_PANEL, limit=1), "_floor_tried", 2.0)
+                if not found:
+                    return None
+                obj = self._floor_obj = found[0]
+            cur, count = self.mem.u32(obj + 0x80), self.mem.u32(obj + 0x78)
+            if not 0 < count <= 8 or not 0 <= cur < count:
+                return None
+            return cur, count
         except NotReady:
             return None
 

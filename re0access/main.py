@@ -155,6 +155,9 @@ class App(RoomList, ModMenu):
             batch = [b for b in batch if T.clean(b[2]) not in ("L", "R", "Hour hand", "Minute hand", "OK",
                                                                 "Hour hand OK", "Minute hand OK")]
         words = [T.clean(raw) for _, _, raw in batch]
+        if any(w.startswith("Select a floor") for w in words):
+            self.floor_at = now             # (the Factory Elevator's floor panel: poll_floor)
+            self.floor_was = None
         if "Continue" in words and "Restart" in words:
             # (a slot picked on the load list: Continue / Restart / Back, the cursor a picture)
             self.load_choices = ["Continue", "Restart", "Back"]
@@ -616,6 +619,30 @@ class App(RoomList, ModMenu):
             else:
                 self.say(" ".join(map(str, nums)), interrupt=True)
 
+    # The Factory Elevator's floors: where each one goes
+    FLOORS = {0: "back to the Training Facility, the tunnel with the train wreck",
+              1: "a new part of the Factory's B1",
+              2: "the Factory's turntable platform",
+              3: "the Treatment Plant"}
+
+    def poll_floor(self):
+        """The Factory Elevator's "Select a floor" panel: the floor picked as you move along it."""
+        now = time.monotonic()
+        if now - getattr(self, "floor_at", -99.0) > 120.0:
+            return
+        got = self.game.floor_panel()
+        if got is None:
+            return
+        cur, count = got
+        was = getattr(self, "floor_was", None)
+        if cur == was:
+            return
+        if was is None and now - self.floor_at < 1.0:
+            return              # (after the game's own words: "Select a floor. Lv1 Lv2 Lv3 Lv4")
+        self.floor_was = cur
+        where = self.FLOORS.get(cur) if count == 4 else None
+        self.say("Lv%d%s" % (cur + 1, ", " + where if where else ""), interrupt=was is not None)
+
     def poll_door_dial(self):
         """The dial on the combination lock (the Elevator Passage's door to Machine Room 1F): the
         number it shows, said as you turn it, and again after "Please enter the second digit"."""
@@ -809,7 +836,7 @@ class App(RoomList, ModMenu):
         self.dead_seen = dead
 
     # (each loop, in this order)
-    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial', 'poll_door_dial']
+    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial', 'poll_door_dial', 'poll_floor']
 
     def run(self):
         self.say("Resident Access 0, version %s. Waiting for the game." % VERSION)
