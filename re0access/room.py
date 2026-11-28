@@ -430,10 +430,24 @@ class RoomData:
                 name = what + ("" if "Hookshot" in what else ", use the Hookshot here") + where
                 hz = hook_zones[index]
                 lo, hi = _box(hz)
+                outline = _footprint(hz)
+                door_too = any(i2 == index and k2 in DOOR_KINDS and k2 != HOOKSHOT_KIND
+                               for k2, _o2, i2 in script.entries)
+                if index in zones and not door_too:
+                    # (where the zone file's box of that number lies inside the camera area, the
+                    # game wants you in that box: Machine Room 1F's corner, where the wider camera
+                    # area let auto walk stop you short. The library's box of that number is a
+                    # shelf elsewhere, and the Church's is its entrance door's: the camera area then)
+                    blo, bhi = _box(zones[index])
+                    x0, z0 = max(lo[0], blo[0]), max(lo[2], blo[2])
+                    x1, z1 = min(hi[0], bhi[0]), min(hi[2], bhi[2])
+                    if x1 - x0 > 40.0 and z1 - z0 > 40.0:
+                        lo, hi = (x0, lo[1], z0), (x1, hi[1], z1)
+                        outline = [(x0, z0), (x1, z0), (x1, z1), (x0, z1)]
                 lo = (lo[0], min(max(lo[1], floor - 20.0), hi[1]), lo[2])   # (the camera area is tall)
                 centre = ((lo[0] + hi[0]) / 2, lo[1], (lo[2] + hi[2]) / 2)
                 th = Thing("check", name, centre, (lo, (hi[0], lo[1] + 20.0, hi[2])), zone=None, says=[],
-                           puzzle=True, stand=True, outline=_footprint(hz), hookshot=True)
+                           puzzle=True, stand=True, outline=outline, hookshot=True)
                 th.pad_words = "Here. Open your items and use the Hookshot."
                 self.things.append(th)
         for (code_, index), (kind_, name_) in EXTRA_ZONES.items():
