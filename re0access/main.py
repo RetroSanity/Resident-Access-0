@@ -681,19 +681,30 @@ class App(RoomList, ModMenu):
     def poll_dam(self):
         """The Dam Area Power Supply Panel: the point the cursor is on as it moves, with the
         points it is joined to."""
-        cur = self.game.dam_panel()
-        if cur is None:
+        got = self.game.dam_panel()
+        if got is None:
             self.dam_picking = False
+            self.dam_raw = None
+            return
+        step, cur, raw = got
+        if raw != getattr(self, "dam_raw", None):
+            self.dam_raw = raw
+            logging.info("dam panel: step %d, point %d, %s", step, cur, raw)
+        if step == 9:
+            self.dam_picking = False    # (closing)
         if not getattr(self, "dam_picking", False):
             self.dam_was = None
             return
+        if step != 4 or cur >= 22:
+            return                      # (a point being picked: carries on once the cursor is back)
         was = getattr(self, "dam_was", None)
         self.dam_was = cur
         if cur == was:
             return
         links = sorted({b for a, b in self.DAM_LINKS if a == cur} | {a for a, b in self.DAM_LINKS if b == cur})
         words = "%s. Joined to %s." % (self.dam_name(cur), ", ".join(self.dam_short(x) for x in links))
-        if was is None:
+        if was is None and not getattr(self, "dam_told", False):
+            self.dam_told = True
             words = ("Power panel: 22 points in 8 rows, from the top 2, 4, 4, 1, 2, 4, 4 and 1. A point you "
                      "pick powers itself and every point up to 2 lines away; pick 3 so all of them light. "
                      "The D-pad moves, A picks. " + words)

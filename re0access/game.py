@@ -868,14 +868,15 @@ class Game:
             return None
 
     def dam_panel(self):
-        """The point (0 to 21, row by row from the top, left to right) the cursor is on in the Dam
-        Area Power Supply Panel while you pick points, or None."""
+        """The Dam Area Power Supply Panel while it is up: (its step: 4 while you pick points, 9 once
+        it is closing; the point the cursor is on, 0 to 21 row by row; the words +0x24 to +0x40 for
+        the log), or None."""
         try:
             obj = self.mem.u32(DOOR_DIAL_AT[0])
-            if not obj or self.mem.u32(obj) != VT_DAM_PANEL or self.mem.u32(obj + 0x24) != 4:
+            if not obj or self.mem.u32(obj) != VT_DAM_PANEL:
                 return None
-            n = self.mem.u16(obj + 0x3A)
-            return n if n < 22 else None
+            raw = self.mem.read(obj + 0x24, 0x1C)
+            return self.mem.u32(obj + 0x24), self.mem.u16(obj + 0x3A), raw.hex()
         except NotReady:
             return None
 
