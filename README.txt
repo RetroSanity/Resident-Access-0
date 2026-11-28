@@ -4,7 +4,7 @@ played blind with an Xbox controller. It speaks through your screen reader
 (NVDA, JAWS, ZoomText, System Access and others), or Windows' own voice if no
 screen reader is running.
 
-This is an early build (0.42). It is built from Resident Access HD
+This is an early build (0.43). It is built from Resident Access HD
 (the mod for Resident Evil HD Remaster), and more is coming.
 
 Installing
@@ -37,7 +37,8 @@ What it reads by itself
   questions and their Yes and No, the pause menu, saving and loading, and
   cutscene subtitles.
 - Your item screen (X): each item as you move to it, with how many
-  ("Handgun, 15 rounds", "Handgun Ammo, 30"), "equipped" after the weapon
+  ("Handgun, 15 rounds", "Handgun Ammo, 30"), "full" when a stack is at
+  255 (the most a slot holds: it won't combine), "equipped" after the weapon
   in your hand, and "Empty" on an empty slot. The game shows "Equip weapon"
   for both choices: the mod says "Un-equip weapon" when it will take the
   weapon out of your hand, and says what you have equipped when it changes.
@@ -71,8 +72,8 @@ What it reads by itself
   which seat of the conference room.
 - Levers: "Holding" when you pull one and keep hold of it (the hookshot
   release), and "Let go" when the one holding it moves away.
-- The room's name as you go in (the train's cars by their names on the
-  game's map; other areas by area and number for now).
+- The room's name as you go in, by its name on the game's map, from the
+  train through the Training Facility, the Laboratory and the Factory.
 - When Rebecca or Billy dies, and who you are playing as when you switch.
 - The room's name is said once: not again when the game shows a short scene
   from another room (pulling the hookshot release).
@@ -123,9 +124,14 @@ of the room say "upstairs" or "downstairs".
   - The lecture room's lectern, and its sixteen seats ("Seat 2, front row,
     right of the aisle"), numbered as on the Microfilm Image: auto walk
     takes you behind the seat's desk, facing it.
-  - Places to use the Hookshot (the hole the bat makes in the Church roof):
-    auto walk takes you under it and says to use the Hookshot from your
-    items.
+  - Places to use the Hookshot (the hole the bat makes in the Church roof,
+    the hole in the Reference Room's ceiling, the corner of Machine Room
+    1F): auto walk takes you right into the spot and says to use the
+    Hookshot from your items.
+  - Places an item goes are named for it: the Leech Laboratory's gas pump
+    (the Sterilizing Agent), Machine Room 2F's power regulator (the Input
+    and Output Reg. Coils), the Turntable Yard's elevator keyhole (the
+    Elevator Key).
 - The lists change as you go into each new room.
 - Enemies: what each one is, how far, and how much health it has left, in
   percent. As you shoot one its health is said, and "dead" when it dies
@@ -134,6 +140,8 @@ of the room say "upstairs" or "downstairs".
   or "in another room".
 - With Rebecca and Billy in different rooms, everything is still measured
   from the room you are in, and only that room's enemies are listed.
+- Items the game keeps out of reach (a spare far below the floor) and key
+  items your partner already took are not listed.
 
 The controller list
 Hold the left bumper (without aiming) and, while you hold it:
@@ -175,6 +183,12 @@ Sometimes you may have to turn left or right a little, or step forward a
 little, before A works on something: an item, a door, stairs or a thing to
 check. If "Here. Press A" does nothing, turn a touch each way, or take a
 small step forward, and press A again.
+Items up on a table or a machine are reached from close enough and faced
+straight on (the Breeding Room Key on the gas injector); items on the floor
+from a step nearer. Your partner is walked round, and if they stand in
+the way it says so: the right bumper tells them to wait or follow. The
+Outside Area's gate is walked through, and when it is shut auto walk
+presses A to open it and carries on.
 Some things to check only do something later in the story (Edward's body on
 the train, for one): pressing A there may do nothing yet.
 
