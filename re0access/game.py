@@ -876,7 +876,8 @@ class Game:
             if not obj or self.mem.u32(obj) != VT_DAM_PANEL:
                 return None
             raw = self.mem.read(obj + 0x24, 0x1C)
-            return self.mem.u32(obj + 0x24), self.mem.u16(obj + 0x3A), raw.hex()
+            # (the point's number carries 0x80 from row 5 down)
+            return self.mem.u16(obj + 0x24), self.mem.u16(obj + 0x3A) & 0x7F, raw.hex()
         except NotReady:
             return None
 
