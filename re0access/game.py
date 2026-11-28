@@ -181,6 +181,12 @@ ROOM_NAMES = {
     "ch0c": "Cable Car", "ch1c": "Cable Car", "ch1d": "Cable Car",
     "ch0d": "Reference Room",
     "ch0e": "Marcus's Study",
+    # The Factory (names from the game's map, matched by what each room links to and holds; bt05
+    # and on are the same rooms later in the story)
+    "bt00": "Platform", "bt05": "Platform", "bt01": "Maintenance Shaft",
+    "bt02": "Turntable Yard", "bt06": "Turntable Yard", "bt07": "Turntable Yard", "bt08": "Turntable Yard",
+    "bt03": "Turntable Monitor Room", "bt04": "Turntable Control Room",
+    "pl19": "Factory Elevator",
 }
 
 

@@ -35,6 +35,15 @@ ZONE_NAMES = {
     # (the Leech Laboratory: the gas pump for the chamber next door takes the Sterilizing Agent
     # from the Morgue - "The sterilizing agent has been set into place")
     ("ch06", 2): "Gas pump, put the Sterilizing Agent here",
+    ("bt02", 4): "Turntable lever, lowers the turntable",
+    ("bt02", 7): "Turntable lever, it won't go any lower",
+    ("bt02", 8): "Security Room door, nothing to search",
+    ("bt02", 9): "Corner, already searched",
+    ("bt02", 10): "Nothing to search here",
+    ("bt02", 11): "Elevator keyhole, use the Elevator Key here",
+    ("bt04", 2): "Turntable control panel, has a keyhole",
+    ("bt04", 3): "Trap door, sealed",
+    ("bt04", 7): "Monitoring equipment",
     ("ch05", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
     ("ch17", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",
     ("ch18", 6): "Power regulator for the Cable Car, the Input and Output Reg. Coils go here",

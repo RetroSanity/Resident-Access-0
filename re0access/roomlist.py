@@ -438,8 +438,8 @@ class RoomList(PushMixin):
                 if n > 1:
                     twins[key] = max(n, twins.get(key, 0))
             for k, item, amount, put, pos in recs:
-                if amount == 0 or pos == (0.0, 0.0, 0.0):
-                    continue
+                if amount == 0 or pos == (0.0, 0.0, 0.0) or pos[1] < -10000.0:
+                    continue        # (put away far below the floor: the Turntable Yard's spare Dial)
                 key = (self.scene, item, round(pos[0] / 25.0), round(pos[2] / 25.0))
                 if key in twins and groups.get(key, 0) < twins[key]:
                     continue
