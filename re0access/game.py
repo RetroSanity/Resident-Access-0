@@ -122,6 +122,7 @@ def enemy_name(kind):
     return ENEMY_NAMES.get(kind, "Enemy")
 
 
+WAITING_KINDS = {0x2F, 0x37}  # (Hunters, the Proto-Tyrant)
 WAITING = 0xFC8             # in an enemy: 2 while it is there but not yet in play, 0 once it is
 POS = 0x40                    # in any unit: x, y, z (floats, centimetres)
 MATRIX = 0x70                 # in any unit: its world matrix, 4 rows of 4 floats (the last row is the position)
@@ -193,6 +194,18 @@ ROOM_NAMES = {
     "bt02": "Turntable Yard", "bt06": "Turntable Yard", "bt07": "Turntable Yard", "bt08": "Turntable Yard",
     "bt03": "Turntable Monitor Room", "bt04": "Turntable Control Room",
     "pl19": "Factory Elevator",
+    # The Treatment Plant (names from the game's map, matched by what each room links to and holds;
+    # pl1a and on are the same rooms later in the story). The Control Room's floor below, past
+    # its lift, is the map's Air Regulator Room.
+    "pl00": "Bridge", "pl01": "Control Room", "pl1a": "Control Room", "pl02": "Generator Room 2F",
+    "pl03": "Generator Room", "pl04": "'L' Corridor", "pl05": "Rec Room", "pl06": "B6 Walkway",
+    "pl07": "Lodgings", "pl09": "Purification Room", "pl0a": "B7 Walkway", "pl0b": "Cargo Control Room",
+    "pl0c": "Maintenance Area", "pl0d": "Water Pool", "pl1b": "Water Pool", "pl0e": "Stairway",
+    "pl0f": "Dumping Area", "pl10": "Laboratory", "pl11": "Floodgate Control Room",
+    "pl1d": "Floodgate Control Room", "pl12": "Water Treatment Walkway", "pl13": "Water Treatment Room",
+    "pl14": "Laboratory Cryo Room", "pl1e": "Laboratory Cryo Room", "pl15": "Engine Room",
+    "pl16": "Dam", "pl1f": "Dam", "pl17": "Incinerator", "pl18": "Cargo Room", "pl20": "Storage",
+    "pl21": "Fenced Area",
 }
 
 
@@ -636,7 +649,9 @@ class Game:
             if off:
                 x, y, z = x - off[0], y - off[1], z - off[2]
             try:
-                waiting = self.mem.u32(obj + WAITING) == 2
+                # (only the kinds it was seen on: on the humanoid leech the same word is 2 while it
+                # is attacking you, splitting into leeches)
+                waiting = kind in WAITING_KINDS and self.mem.u32(obj + WAITING) == 2
             except NotReady:
                 waiting = False
             if waiting and hp > 0:
