@@ -476,8 +476,10 @@ class RoomList(PushMixin):
             now_hp[obj] = hp
             if hp > 0:
                 top = self.enemy_top(obj, hp)
+                self.dump_enemy(obj, "seen")
             old = was.get(obj)
             if old is not None and old > 0 and hp < old and getattr(self, "_hp_scene", None) == self.scene:
+                self.dump_enemy(obj, "hit")
                 # hit: how much it has left (or that it is dead)
                 if hp <= 0:
                     died.append(enemy_name(ek))
@@ -487,7 +489,7 @@ class RoomList(PushMixin):
         if len(died) == 1:
             self.say("%s dead." % died[0], interrupt=True)
         elif died:
-            many = {"Zombie": "zombies", "Leech": "leeches", "Spider": "spiders", "Cerberus": "Cerberuses"}
+            many = {"Zombie": "zombies", "Leech": "leeches", "Spider": "spiders", "Cerberus": "Cerberuses", "Hunter": "Hunters"}
             what = many.get(died[0], "enemies") if len(set(died)) == 1 else "enemies"
             self.say("%d %s dead." % (len(died), what), interrupt=True)
         elif hits:
@@ -501,6 +503,25 @@ class RoomList(PushMixin):
             beeps.threat(0.0, 1.0, 0.0, True, True)
         else:
             beeps.calm()
+
+    def dump_enemy(self, obj, when):
+        """A copy of an enemy's memory the first time it is seen in a room and the first time it is
+        hit, in the enemydump folder (at most 60 files a run): to tell the enemies that are there but
+        not yet in play (the Turntable Monitor Room's two Hunters before they jump you, which set off
+        the aim beep) from the ones that are."""
+        done = self.__dict__.setdefault("_dumped", set())
+        key = (self.scene, obj, when)
+        if key in done or len(done) >= 60:
+            return
+        done.add(key)
+        try:
+            data = self.game.mem.read(obj, 0x1200)
+            folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "enemydump")
+            os.makedirs(folder, exist_ok=True)
+            with open(os.path.join(folder, "%s_%x_%s_%d.bin" % (self.scene, obj, when, int(time.time()))), "wb") as f:
+                f.write(data)
+        except Exception:
+            pass
 
     def aiming(self):
         """The weapon is up: the aim button (right bumper) held in play."""
