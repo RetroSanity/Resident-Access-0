@@ -32,11 +32,12 @@ CHECK_NAMES = [
 # (checks that are where an item goes, though they ask nothing: listed under Puzzles)
 TWO_FLOOR_LIFTS = {("bt02", 5): (("Small lift down to the lower walkway", 4300.0),
                                    ("Small lift up to the top floor", 4005.0))}
-PUZZLE_ZONES = {("ch06", 2), ("ch05", 6), ("ch17", 6), ("ch18", 6), ("ch19", 6)}
+PUZZLE_ZONES = {("pl01", 7), ("ch06", 2), ("ch05", 6), ("ch17", 6), ("ch18", 6), ("ch19", 6)}
 ZONE_NAMES = {
     # (the Leech Laboratory: the gas pump for the chamber next door takes the Sterilizing Agent
     # from the Morgue - "The sterilizing agent has been set into place")
     ("ch06", 2): "Gas pump, put the Sterilizing Agent here",
+    ("pl01", 7): "Dam power supply panel",
     ("bt02", 4): "Turntable lever, lowers the turntable",
     ("bt02", 7): "Turntable lever, it won't go any lower",
     ("bt02", 8): "Security Room door, nothing to search",

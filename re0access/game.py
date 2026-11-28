@@ -81,6 +81,8 @@ VT_DIAL = 0x00CE2870          # the combination dials (the Duralumin Case): +0x2
 VT_FLOOR_PANEL = 0x00CD3AAC   # the Factory Elevator's "Select a floor" panel: +0x78 how many floors, +0x80
                               # the one picked (0 for Lv1; Right goes up one)
 FLOOR_PANEL_AT = (0x00E2DAA4, 0x3B0, 0x220)  # [[global] + 0x3B0] + 0x220 is that panel
+VT_DAM_PANEL = 0x00CF4CA4     # the Dam Area Power Supply Panel's points: [0xDCBFD0] while it is up;
+                              # +0x24 4 while you pick points, +0x3A the point the cursor is on (0 to 21)
 VT_DOOR_DIAL = 0x00CF4058     # the dial on the combination lock (the Elevator Passage's door to Machine Room
                               # 1F): +0x8 2, then 4 once a digit is in, +0x10 the number it shows (Right
                               # adds one), +0x14 its angle, +0x18 not 0 while it is up. Only ever one.
@@ -862,6 +864,18 @@ class Game:
             if not 2 <= count <= 8 or not 0 <= cur < count:
                 return None
             return cur, count
+        except NotReady:
+            return None
+
+    def dam_panel(self):
+        """The point (0 to 21, row by row from the top, left to right) the cursor is on in the Dam
+        Area Power Supply Panel while you pick points, or None."""
+        try:
+            obj = self.mem.u32(DOOR_DIAL_AT[0])
+            if not obj or self.mem.u32(obj) != VT_DAM_PANEL or self.mem.u32(obj + 0x24) != 4:
+                return None
+            n = self.mem.u16(obj + 0x3A)
+            return n if n < 22 else None
         except NotReady:
             return None
 

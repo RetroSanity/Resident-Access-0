@@ -293,6 +293,10 @@ class App(RoomList, ModMenu):
 
     def panel_answer(self, q, answer):
         """A question at the panel answered: say what it did to the meter."""
+        if "change points" in q:
+            self.dam_picking = answer == 0      # (the Dam Area Power Supply Panel: picking points now)
+            self.dam_was = None
+            return
         if "adjust the panel" in q:
             if answer == 0:
                 self.panel_volts = 0
@@ -649,6 +653,52 @@ class App(RoomList, ModMenu):
         where = self.FLOORS.get(cur) if count == 4 else None
         self.say("Lv%d%s" % (cur + 1, ", " + where if where else ""), interrupt=was is not None)
 
+    # The Dam Area Power Supply Panel: 22 points in 8 rows (2, 4, 4, 1, 2, 4, 4, 1 from the top),
+    # numbered row by row, left to right, and the lines joining them (read off the panel)
+    DAM_ROWS = [2, 4, 4, 1, 2, 4, 4, 1]
+    DAM_LINKS = [(0, 1), (0, 3), (1, 4), (2, 3), (3, 4), (4, 5), (2, 7), (3, 7), (5, 8), (5, 9), (6, 7),
+                 (7, 10), (8, 10), (10, 11), (7, 11), (6, 13), (11, 13), (11, 14), (14, 18), (13, 17),
+                 (17, 18), (18, 21), (8, 12), (12, 15), (15, 16), (15, 19), (19, 20), (16, 20), (9, 16)]
+
+    def dam_name(self, n):
+        k = n
+        for row, count in enumerate(self.DAM_ROWS):
+            if k < count:
+                if count == 1:
+                    return "row %d, %s" % (row + 1, "the centre" if row == 3 else "the only point")
+                return "row %d, point %d of %d" % (row + 1, k + 1, count)
+            k -= count
+        return "point %d" % (n + 1)
+
+    def dam_short(self, n):
+        k = n
+        for row, count in enumerate(self.DAM_ROWS):
+            if k < count:
+                return "%d %d" % (row + 1, k + 1) if count > 1 else "%d" % (row + 1)
+            k -= count
+        return str(n + 1)
+
+    def poll_dam(self):
+        """The Dam Area Power Supply Panel: the point the cursor is on as it moves, with the
+        points it is joined to."""
+        cur = self.game.dam_panel()
+        if cur is None:
+            self.dam_picking = False
+        if not getattr(self, "dam_picking", False):
+            self.dam_was = None
+            return
+        was = getattr(self, "dam_was", None)
+        self.dam_was = cur
+        if cur == was:
+            return
+        links = sorted({b for a, b in self.DAM_LINKS if a == cur} | {a for a, b in self.DAM_LINKS if b == cur})
+        words = "%s. Joined to %s." % (self.dam_name(cur), ", ".join(self.dam_short(x) for x in links))
+        if was is None:
+            words = ("Power panel: 22 points in 8 rows, from the top 2, 4, 4, 1, 2, 4, 4 and 1. A point you "
+                     "pick powers itself and every point up to 2 lines away; pick 3 so all of them light. "
+                     "The D-pad moves, A picks. " + words)
+        self.say(words, interrupt=True)
+
     def poll_door_dial(self):
         """The dial on the combination lock (the Elevator Passage's door to Machine Room 1F): the
         number it shows, said as you turn it, and again after "Please enter the second digit"."""
@@ -842,7 +892,7 @@ class App(RoomList, ModMenu):
         self.dead_seen = dead
 
     # (each loop, in this order)
-    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial', 'poll_door_dial', 'poll_floor']
+    POLLS = ['poll_pad_fix', 'poll_room', 'poll_title', 'poll_text', 'poll_death', 'poll_controller', 'poll_offset', 'poll_walk', 'poll_ledge', 'poll_push', 'poll_taken', 'poll_partner', 'poll_modmenu', 'poll_enemies', 'poll_item_screen', 'poll_examine', 'poll_equip', 'poll_files', 'poll_choice', 'poll_clock', 'poll_hold', 'poll_save', 'poll_load_choice', 'poll_brake', 'poll_dial', 'poll_door_dial', 'poll_floor', 'poll_dam']
 
     def run(self):
         self.say("Resident Access 0, version %s. Waiting for the game." % VERSION)
