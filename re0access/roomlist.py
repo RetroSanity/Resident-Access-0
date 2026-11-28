@@ -53,6 +53,8 @@ A_WALL_ROOMS = {"ch00", "ch10"}
 # (rooms whose stairs only the second collision file has whole: the main one walls them off at
 # both ends - the Factory Platform's steep stairs up to the Turntable Yard door)
 A_ONLY_ROOMS = {"bt00", "bt05"}
+# (rooms where the floor you stand on rides up and down a shaft: the Factory's turntable)
+SHAFT_ROOMS = {"bt02"}
 LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any", "sh09": "any"}
 
 
@@ -1597,6 +1599,14 @@ class RoomList(PushMixin):
         p, h = self.where_me()
         if not p or h is None:
             self.say("Not in the game.", interrupt=True)
+            return
+        rdn = self.room_data
+        if (rdn is not None and rdn.base_code in SHAFT_ROOMS and t.pos[1] < p[1] - 1500.0
+                and not t.name.startswith("Turntable lever")):
+            # (the Turntable Yard: what's at the bottom of the shaft is reached by riding the
+            # turntable down, not by walking - auto walk would stop you right above it)
+            self.say("%s is at the bottom of the shaft, %d metres down. Use the turntable lever "
+                     "to ride the turntable down." % (t.name, round((p[1] - t.pos[1]) / 100.0)), interrupt=True)
             return
         if getattr(t, "away", False):
             there, door = self.partner_way(t.name) if t.kind == "partner" else (None, None)
