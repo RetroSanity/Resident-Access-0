@@ -1700,6 +1700,7 @@ class RoomList(PushMixin):
             if fl is not None and y * MM - fl > 400.0:
                 r = self.TABLE_REACH    # (up on a table: the near edge is as near as you get - the
                                         # Training Room's ammo on the gun bench, at the back of it)
+                t.raised = True         # (and you must be near it and facing it: can_reach)
             t.outline = [(x - r, z - r), (x + r, z - r), (x + r, z + r), (x - r, z + r)]
             box = t.box = ((x - r, y, z - r), (x + r, y, z + r))
         if getattr(t, "stand", False) and way is not None:
@@ -1966,6 +1967,7 @@ class RoomList(PushMixin):
     ITEM_REACH = 12.0   # (cm: how near an item the point A looks at has to be)
     TABLE_REACH = 45.0  # (cm: the same for an item up on a table or a shelf - the Operating Room's
                         # spray beside the overturned table is taken with A pointing 41 cm from it)
+    RAISED_NEAR = 780.0  # (mm: how near an item up on something you have to stand)
     REACH = 520.0       # (mm: the game's A looks for a thing to check about this far in front of you)
 
     def outline_of(self, t):
@@ -2038,6 +2040,8 @@ class RoomList(PushMixin):
             return t.face               # (a step up or down: across it, to the other level)
         x, z = p[0] * MM, p[2] * MM
         base = math.atan2(t.pos[0] * MM - x, t.pos[2] * MM - z)
+        if getattr(t, "raised", False):
+            return base                 # (up on something: straight at it)
         for k in range(0, 25):
             for sign in ((1,) if k == 0 else (1, -1)):
                 a = base + sign * k * math.pi / 24
@@ -2048,6 +2052,13 @@ class RoomList(PushMixin):
     def can_reach(self, t, x, z, rot):
         """True if the point the game's A looks at (from x, z mm facing rot) is in the thing's outline."""
         fx, fz = x + math.sin(rot) * self.REACH, z + math.cos(rot) * self.REACH
+        if getattr(t, "raised", False):
+            # (up on something: the game gives it to you only from within about 80 cm of it and
+            # facing it - the Breeding Room Key on the gas injector, where A from farther off
+            # looks at the injector instead)
+            dx, dz = t.pos[0] * MM - x, t.pos[2] * MM - z
+            if math.hypot(dx, dz) > self.RAISED_NEAR or abs(angle_diff(math.atan2(dx, dz), rot)) > 0.45:
+                return False
         return R.in_outline(self.outline_of(t), fx / MM, fz / MM)
 
     @staticmethod
