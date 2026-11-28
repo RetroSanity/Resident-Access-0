@@ -55,6 +55,9 @@ A_WALL_ROOMS = {"ch00", "ch10"}
 A_ONLY_ROOMS = {"bt00", "bt05"}
 # (rooms where the floor you stand on rides up and down a shaft: the Factory's turntable)
 SHAFT_ROOMS = {"bt02"}
+# Walls the collision files leave out (mm: x1, z1, x2, z2, bottom, top): the Rec Room's railing
+# along the stairwell down to the Maintenance Area, entered only from its west end
+EXTRA_WALLS = {"pl05": [(5000.0, 5020.0, 7400.0, 5020.0, 0.0, 1000.0)]}
 LOW_HEAD_ROOMS = {"dm09": "sloped", "dm0a": "any", "sh09": "any"}
 
 
@@ -156,6 +159,10 @@ class RoomList(PushMixin):
             if key in ents:
                 tris = sbc.triangles(sbc.unpack(d, ents[key]))
                 self._tris_e = [tuple(tuple(c * MM for c in p) for p in t) for t in tris]
+                for x1, z1, x2, z2, lo, hi in EXTRA_WALLS.get(name, ()):
+                    # (a wall the collision files leave out, as two upright triangles)
+                    a, b, c, d2 = (x1, lo, z1), (x2, lo, z2), (x2, hi, z2), (x1, hi, z1)
+                    self._tris_e += [(a, b, c), (a, c, d2)]
                 key_a = "scene\\scr\\%sa" % name
                 if key_a in ents:
                     self._tris_a = [tuple(tuple(c * MM for c in p) for p in t)
